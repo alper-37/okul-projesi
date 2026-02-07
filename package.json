@@ -1,0 +1,30 @@
+{
+  "name": "okul-projesi",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "preview": "vite preview",
+    "type-check": "vue-tsc --build",
+    "build-only": "node --max-old-space-size=4096 node_modules/vite/bin/vite.js build",
+    "build": "run-p type-check build-only"
+  },
+  "dependencies": {
+    "chart.js": "^4.5.1",
+    "firebase": "^12.9.0",
+    "vue": "^3.5.26",
+    "vue-chartjs": "^5.3.3"
+  },
+  "devDependencies": {
+    "@tsconfig/node24": "^24.0.4",
+    "@types/node": "^24.10.9",
+    "@vitejs/plugin-vue": "^6.0.3",
+    "@vue/tsconfig": "^0.8.1",
+    "npm-run-all2": "^8.0.4",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.1",
+    "vite-plugin-vue-devtools": "^8.0.5",
+    "vue-tsc": "^3.2.2"
+  }
+}

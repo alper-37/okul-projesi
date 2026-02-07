@@ -1,0 +1,488 @@
+<script setup>
+import { ref, onMounted, onUnmounted, computed } from 'vue';
+import { db } from './firebase';
+import { collection, onSnapshot, query, orderBy, addDoc, updateDoc, doc, deleteDoc, setDoc, getDoc, getDocs, serverTimestamp, where } from 'firebase/firestore';
+import { Chart as ChartJS, ArcElement, Tooltip, Legend } from 'chart.js';
+import { Pie } from 'vue-chartjs';
+
+ChartJS.register(ArcElement, Tooltip, Legend);
+
+// --- DEĞİŞKENLER ---
+const questions = ref([]);
+const pendingUsers = ref([]); // Onay bekleyen öğrenciler listesi
+
+// KULLANICI YÖNETİMİ
+const currentUser = ref(null); // Giriş yapmış kullanıcı
+const isAuthorized = ref(false); // Yönetici mi?
+const activeUserRole = ref(""); // Ekranda görünecek rol adı
+
+const showAuthModal = ref(false); // Giriş/Kayıt Modalı
+const authTab = ref('login'); // 'login' veya 'register'
+const showSettingsModal = ref(false);
+const showAskModal = ref(false);
+const showAnswerModal = ref(false);
+const showStats = ref(false);
+
+// FORM VERİLERİ
+const loginForm = ref({ identifier: '', password: '' }); // No veya Yönetici Şifresi
+const registerForm = ref({ name: '', surname: '', number: '', grade: '', password: '' });
+
+// FİLTRELEME & SÖZLER
+const searchQuery = ref("");
+const selectedSubjectFilter = ref("Tümü");
+const notification = ref({ show: false, message: '', type: 'success' });
+const successSound = new Audio('https://assets.mixkit.co/active_storage/sfx/2578/2578-preview.mp3'); 
+
+const defaultQuotes = ["İlim ilim bilmektir.", "Kolaylaştırınız.", "Danışan dağları aşmış."];
+
+// OKUL AYARLARI
+const schoolSettings = ref({
+  name: 'Taşköprü AİHL',
+  logo: 'https://img.icons8.com/color/96/graduation-cap.png',
+  subjects: ['Tarih', 'Matematik', 'Edebiyat', 'Din K.', 'Coğrafya', 'Fizik'],
+  dailyMessage: '', quotePool: [...defaultQuotes],
+  styles: { leaderboardBg: '#2d3436', leaderboardColor: '#f1c40f', leaderboardSize: '14', quoteBg: '#6c5ce7', quoteColor: '#ffffff', quoteSize: '16', fontFamily: "'Poppins', sans-serif", baseFontSize: 14 }
+});
+
+const fontOptions = [
+  { name: 'Modern (Poppins)', value: "'Poppins', sans-serif" },
+  { name: 'Ciddi (Roboto)', value: "'Roboto', sans-serif" },
+  { name: 'Gazete (Merriweather)', value: "'Merriweather', serif" }
+];
+
+const currentDisplayQuote = ref(""); 
+let quoteInterval = null; 
+const newQuoteInput = ref(""); 
+const newSubjectName = ref(""); 
+const newQuestion = ref({ subject: '', topic: '', content: '' }); // İsimler artık otomatikten geliyor
+const answerData = ref({ id: '', text: '' });
+
+// --- YARDIMCI FONKSİYONLAR ---
+const showToast = (msg, type = 'success') => {
+  notification.value = { show: true, message: msg, type: type };
+  if (type === 'success') successSound.play().catch(() => {}); 
+  setTimeout(() => { notification.value.show = false; }, 3000); 
+};
+
+// --- AUTH (GİRİŞ & KAYIT) İŞLEMLERİ ---
+
+// 1. ÖĞRENCİ KAYIT OL
+const handleRegister = async () => {
+  const { name, surname, number, grade, password } = registerForm.value;
+  if (!name || !surname || !number || !grade || !password) return alert("Lütfen tüm alanları doldurun.");
+
+  // Numara kontrolü (Daha önce kayıtlı mı?)
+  const q = query(collection(db, "users"), where("number", "==", number));
+  const snapshot = await getDocs(q);
+  if (!snapshot.empty) return alert("Bu okul numarası zaten kayıtlı!");
+
+  await addDoc(collection(db, "users"), {
+    name: `${name} ${surname}`,
+    number, grade, password,
+    role: 'student',
+    isApproved: false, // ONAY BEKLİYOR OLARAK KAYDOLUR
+    created_at: serverTimestamp()
+  });
+
+  alert("Kaydınız başarıyla alındı! Okul Müdürümüz onayladığında giriş yapabileceksiniz.");
+  authTab.value = 'login';
+  registerForm.value = { name: '', surname: '', number: '', grade: '', password: '' };
+};
+
+// 2. GENEL GİRİŞ (Yönetici veya Öğrenci)
+const handleLogin = async () => {
+  const { identifier, password } = loginForm.value;
+  if (!identifier || !password) return alert("Bilgileri giriniz.");
+
+  // A. YÖNETİCİ GİRİŞİ (Sabit Şifreler)
+  if (password === "192319") {
+    currentUser.value = { name: "Okul Müdürü", role: "admin", id: 'admin1' };
+    isAuthorized.value = true;
+    activeUserRole.value = "Okul Müdürü";
+    showAuthModal.value = false;
+    showToast("Yönetici Girişi Başarılı 👋");
+    fetchPendingUsers(); // Bekleyen onayları getir
+    return;
+  }
+  if (password === "202626") {
+    currentUser.value = { name: "Danışman Öğretmen", role: "teacher", id: 'teacher1' };
+    isAuthorized.value = true; // Öğretmen de yetkili sayılır ama onay veremez (isteğe bağlı)
+    activeUserRole.value = "Danışman Öğretmen";
+    showAuthModal.value = false;
+    showToast("Öğretmen Girişi Başarılı 👋");
+    return;
+  }
+
+  // B. ÖĞRENCİ GİRİŞİ (Veritabanından)
+  const q = query(collection(db, "users"), where("number", "==", identifier), where("password", "==", password));
+  const snapshot = await getDocs(q);
+
+  if (snapshot.empty) {
+    return alert("Hatalı Okul No veya Şifre!");
+  }
+
+  const userData = snapshot.docs[0].data();
+  
+  // ONAY KONTROLÜ
+  if (userData.isApproved !== true) {
+    return alert("⚠️ Üyeliğiniz henüz Okul Müdürü tarafından onaylanmamış. Lütfen bekleyiniz.");
+  }
+
+  currentUser.value = { id: snapshot.docs[0].id, ...userData };
+  isAuthorized.value = false;
+  activeUserRole.value = userData.name;
+  showAuthModal.value = false;
+  showToast(`Hoşgeldin ${userData.name} 👋`);
+};
+
+const logout = () => {
+  currentUser.value = null;
+  isAuthorized.value = false;
+  activeUserRole.value = "";
+  showStats.value = false;
+  showSettingsModal.value = false;
+  loginForm.value = { identifier: '', password: '' };
+  showToast("Çıkış Yapıldı", "info");
+};
+
+// --- YÖNETİCİ: ONAY SİSTEMİ ---
+const fetchPendingUsers = () => {
+  // Sadece onaylanmamış öğrencileri getir
+  const q = query(collection(db, "users"), where("isApproved", "==", false));
+  onSnapshot(q, (snapshot) => {
+    pendingUsers.value = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  });
+};
+
+const approveUser = async (userId) => {
+  await updateDoc(doc(db, "users", userId), { isApproved: true });
+  showToast("Öğrenci Onaylandı ve Sisteme Alındı ✅");
+};
+
+const rejectUser = async (userId) => {
+  if (confirm("Bu kayıt silinsin mi?")) await deleteDoc(doc(db, "users", userId));
+};
+
+// --- VERİ ÇEKME & INIT ---
+onMounted(async () => {
+  const q = query(collection(db, "questions"), orderBy("created_at", "desc"));
+  onSnapshot(q, (snapshot) => {
+    questions.value = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  });
+  
+  const docSnap = await getDoc(doc(db, "settings", "school_info"));
+  if (docSnap.exists()) {
+    const data = docSnap.data();
+    schoolSettings.value = { ...schoolSettings.value, ...data };
+    if (!schoolSettings.value.styles.fontFamily) schoolSettings.value.styles.fontFamily = "'Poppins', sans-serif";
+  }
+  startQuoteCycle();
+});
+
+onUnmounted(() => { if (quoteInterval) clearInterval(quoteInterval); });
+
+// --- SÖZ DÖNGÜSÜ ---
+const startQuoteCycle = () => {
+  if (schoolSettings.value.dailyMessage) {
+    currentDisplayQuote.value = `📢 DUYURU: ${schoolSettings.value.dailyMessage}`;
+    if (quoteInterval) clearInterval(quoteInterval); return;
+  }
+  const cycle = () => {
+    const pool = schoolSettings.value.quotePool;
+    if (pool.length > 0) currentDisplayQuote.value = `💡 GÜNÜN SÖZÜ: ${pool[Math.floor(Math.random() * pool.length)]}`;
+  };
+  cycle(); if (quoteInterval) clearInterval(quoteInterval); quoteInterval = setInterval(cycle, 15000); 
+};
+
+// --- DİĞER FONKSİYONLAR ---
+const addQuoteToPool = () => { if (newQuoteInput.value.trim()) { schoolSettings.value.quotePool.push(newQuoteInput.value.trim()); newQuoteInput.value = ""; showToast("Söz Eklendi 📝"); startQuoteCycle(); } };
+const removeQuoteFromPool = (index) => { if (confirm("Silinsin mi?")) { schoolSettings.value.quotePool.splice(index, 1); startQuoteCycle(); } };
+const handleLogoUpload = (event) => { const file = event.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = (e) => { schoolSettings.value.logo = e.target.result; }; reader.readAsDataURL(file); };
+const saveSettings = async () => { await setDoc(doc(db, "settings", "school_info"), schoolSettings.value); showToast("Ayarlar Kaydedildi! 💾"); showSettingsModal.value = false; startQuoteCycle(); };
+const addSubject = () => { if (newSubjectName.value.trim() && !schoolSettings.value.subjects.includes(newSubjectName.value.trim())) { schoolSettings.value.subjects.push(newSubjectName.value.trim()); newSubjectName.value = ""; } };
+const removeSubject = (index) => { if (confirm("Silinsin mi?")) schoolSettings.value.subjects.splice(index, 1); };
+
+const backupData = async () => { try { const querySnapshot = await getDocs(collection(db, "questions")); const data = querySnapshot.docs.map(doc => doc.data()); const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" }); const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `ADAB_Yedek.json`; document.body.appendChild(link); link.click(); document.body.removeChild(link); showToast("Yedek İndirildi! 📥"); } catch (e) { alert(e.message); } };
+const triggerRestore = () => document.getElementById('restoreInput').click();
+const restoreData = (event) => { const file = event.target.files[0]; if (!file) return; const reader = new FileReader(); reader.onload = async (e) => { try { const data = JSON.parse(e.target.result); if (!confirm(`${data.length} kayıt yüklenecek?`)) return; const batch = writeBatch(db); data.forEach((q) => { batch.set(doc(collection(db, "questions")), { ...q, created_at: serverTimestamp() }); }); await batch.commit(); showToast("Yedek Yüklendi! ♻️"); showSettingsModal.value = false; } catch (err) { alert(err.message); } }; reader.readAsText(file); };
+
+// --- HESAPLAMALAR ---
+const leaderboard = computed(() => {
+  const scores = {};
+  questions.value.forEach(q => {
+    if (q.role === 'Öğrenci' && q.sender && q.isApproved) scores[q.sender] = (scores[q.sender] || 0) + 10;
+    if (q.cevaplayan_rol === 'Öğrenci' && q.cevaplayan && q.isAnswerVerified) scores[q.cevaplayan] = (scores[q.cevaplayan] || 0) + 20;
+  });
+  return Object.entries(scores).map(([name, score]) => ({ name, score })).sort((a, b) => b.score - a.score).slice(0, 5);
+});
+const leaderboardString = computed(() => {
+  const list = leaderboard.value; if (list.length === 0) return "🏆 Henüz puan oluşmadı.";
+  return "🏆 LİDERLER: " + list.map((u, i) => `${i+1}. ${u.name} (${u.score}P)`).join("  •  ");
+});
+const stats = computed(() => { const data = {}; questions.value.filter(q => q.isApproved).forEach(q => { data[q.subject] = (data[q.subject] || 0) + 1; }); return data; });
+const chartData = computed(() => ({ labels: Object.keys(stats.value), datasets: [{ backgroundColor: ['#4facfe', '#00f2fe', '#43e97b', '#fa709a', '#a18cd1'], data: Object.values(stats.value) }] }));
+
+const filteredQuestions = computed(() => {
+  let temp = isAuthorized.value ? questions.value : questions.value.filter(q => q.isApproved === true);
+  if (selectedSubjectFilter.value !== "Tümü") temp = temp.filter(q => q.subject === selectedSubjectFilter.value);
+  if (searchQuery.value.trim() !== "") {
+    const lower = searchQuery.value.toLowerCase();
+    temp = temp.filter(q => q.content.toLowerCase().includes(lower) || q.sender.toLowerCase().includes(lower) || (q.topic && q.topic.toLowerCase().includes(lower)));
+  }
+  return temp;
+});
+
+const downloadReport = () => {
+  const data = questions.value.map(q => ({ "Soran": q.sender, "Ders": q.subject, "Soru": q.content, "Cevap": q.cevap || "Yok" }));
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = "ADAB_Veriseti.json"; document.body.appendChild(link); link.click(); document.body.removeChild(link); showToast("Veri İndirildi! 📥");
+};
+
+// --- YENİ SORU GÖNDERME (OTOMATİK KİMLİK) ---
+const soruGonder = async () => {
+  // Yetki Kontrolü
+  if (!currentUser.value) return alert("Soru sormak için giriş yapmalısınız!");
+  
+  const { subject, content } = newQuestion.value;
+  if (!subject || !content) return alert("Eksik bilgi!");
+  
+  // Otomatik Kimlik Bilgileri
+  await addDoc(collection(db, "questions"), {
+    role: currentUser.value.role === 'admin' || currentUser.value.role === 'teacher' ? 'Öğretmen' : 'Öğrenci',
+    sender: currentUser.value.name, // Otomatik isim
+    grade: currentUser.value.grade || 'Yönetici', // Otomatik sınıf
+    subject, content,
+    status: 'pending', isApproved: false, isAnswerVerified: false, created_at: serverTimestamp()
+  });
+  newQuestion.value.content = ''; showAskModal.value = false; showToast("Soru Gönderildi! ⏳");
+};
+
+const openAnswerModal = (id) => { 
+  if (!currentUser.value) return alert("Cevap vermek için giriş yapmalısınız!");
+  answerData.value = { id, text: '' }; showAnswerModal.value = true; 
+};
+
+const submitAnswer = async () => {
+  const { id, text } = answerData.value; if (!text) return alert("Eksik bilgi!");
+  await updateDoc(doc(db, "questions", id), { 
+    cevap: text, 
+    cevaplayan: currentUser.value.name, // Otomatik isim
+    cevaplayan_rol: currentUser.value.role === 'admin' || currentUser.value.role === 'teacher' ? 'Öğretmen' : 'Öğrenci',
+    status: 'answered', isAnswerVerified: false 
+  });
+  showAnswerModal.value = false; showToast("Cevap Gönderildi! ⏳");
+};
+
+const soruOnayla = async (id) => { await updateDoc(doc(db, "questions", id), { isApproved: true }); showToast("Onaylandı! ✅"); };
+const cevapDogrula = async (id) => { await updateDoc(doc(db, "questions", id), { isAnswerVerified: true, status: 'solved' }); showToast("Doğrulandı! 🌟"); };
+const soruSil = async (id) => { if (confirm("Silinsin mi?")) await deleteDoc(doc(db, "questions", id)); };
+const getMedal = (i) => i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`;
+</script>
+
+<template>
+  <div class="main-wrapper" :style="{ fontFamily: schoolSettings.styles.fontFamily, fontSize: schoolSettings.styles.baseFontSize + 'px' }">
+    <div v-if="notification.show" class="toast-notification">{{ notification.message }}</div>
+
+    <div class="app-frame">
+      <div v-if="showLoginModal || showSettingsModal || showAnswerModal || showAskModal" class="modal-overlay">
+        
+        <div v-if="showLoginModal" class="modal-box glass">
+          <div class="auth-tabs">
+            <button :class="{active: authTab==='login'}" @click="authTab='login'">Giriş Yap</button>
+            <button :class="{active: authTab==='register'}" @click="authTab='register'">Kayıt Ol</button>
+          </div>
+
+          <div v-if="authTab==='login'" class="mt-4">
+            <input v-model="loginForm.identifier" type="text" placeholder="Okul No (veya Yönetici Şifresi)" class="modern-input">
+            <input v-model="loginForm.password" type="password" placeholder="Şifreniz" class="modern-input" @keyup.enter="handleLogin">
+            <button @click="handleLogin" class="btn-gradient full">Giriş Yap</button>
+          </div>
+
+          <div v-if="authTab==='register'" class="mt-4">
+            <div class="row-2">
+              <input v-model="registerForm.name" placeholder="Adınız" class="modern-input">
+              <input v-model="registerForm.surname" placeholder="Soyadınız" class="modern-input">
+            </div>
+            <input v-model="registerForm.number" type="number" placeholder="Okul Numaranız" class="modern-input">
+            <select v-model="registerForm.grade" class="modern-input">
+              <option disabled value="">Sınıfınız</option>
+              <option>9. Sınıf</option><option>10. Sınıf</option><option>11. Sınıf</option><option>12. Sınıf</option>
+            </select>
+            <input v-model="registerForm.password" type="password" placeholder="Şifre Belirleyin" class="modern-input">
+            <button @click="handleRegister" class="btn-primary full">Kaydı Tamamla</button>
+            <small class="note">Kaydınız müdür onayı sonrası aktif olacaktır.</small>
+          </div>
+          
+          <button @click="showLoginModal = false" class="btn-text mt-2">Kapat</button>
+        </div>
+
+        <div v-if="showSettingsModal" class="modal-box glass large" style="max-height:85vh; overflow-y:auto;">
+          <h3>⚙️ Yönetici Paneli</h3>
+          
+          <div class="settings-group" style="border-color:#ff9800; background:#fff3e0;">
+             <h4>⏳ Onay Bekleyen Öğrenciler ({{ pendingUsers.length }})</h4>
+             <div v-if="pendingUsers.length === 0" class="empty-state-small">Bekleyen öğrenci yok.</div>
+             <div class="pool-list">
+               <div v-for="user in pendingUsers" :key="user.id" class="pool-item pending-item">
+                 <div><b>{{ user.number }}</b> - {{ user.name }} ({{ user.grade }})</div>
+                 <div class="action-btns">
+                   <button @click="approveUser(user.id)" class="btn-mini ok">✓</button>
+                   <button @click="rejectUser(user.id)" class="btn-mini del">✕</button>
+                 </div>
+               </div>
+             </div>
+          </div>
+
+          <div class="settings-group mt-4">
+            <h4>🏫 Okul Bilgisi</h4><input v-model="schoolSettings.name" type="text" class="modern-input">
+            <div class="file-upload-wrapper"><img :src="schoolSettings.logo" class="preview-logo"><label for="logo" class="btn-outline upload-btn">Logo Seç</label><input type="file" id="logo" @change="handleLogoUpload" style="display:none;"></div>
+          </div>
+          <div class="settings-group mt-4"><h4>🎨 Tasarım</h4><div class="mt-2"><label>Yazı Boyutu:</label><input type="range" v-model="schoolSettings.styles.baseFontSize" min="12" max="24" class="full"></div></div>
+          <div class="settings-group mt-4"><h4>📢 Havuz</h4><div class="subject-add-row"><input v-model="newQuoteInput" placeholder="Söz ekle..." class="modern-input"><button @click="addQuoteToPool" class="btn-primary">+</button></div></div>
+          
+          <button @click="saveSettings" class="btn-primary full mt-4">Kaydet</button><button @click="showSettingsModal = false" class="btn-text mt-2">Vazgeç</button>
+        </div>
+
+        <div v-if="showAskModal" class="modal-box glass large">
+           <h3>✨ Soru Sor</h3>
+           <div class="form-grid">
+              <div class="user-info-bar">👤 {{ currentUser.name }} ({{ currentUser.grade }})</div>
+              <select v-model="newQuestion.subject" class="modern-input"><option disabled value="">Ders Seçiniz</option><option v-for="s in schoolSettings.subjects" :key="s">{{s}}</option></select>
+              <textarea v-model="newQuestion.content" placeholder="Sorunuzu buraya yazın..." class="modern-input" rows="4"></textarea>
+              <div class="modal-buttons"><button @click="soruGonder" class="btn-gradient">🚀 Gönder</button><button @click="showAskModal = false" class="btn-text">Vazgeç</button></div>
+           </div>
+        </div>
+
+        <div v-if="showAnswerModal" class="modal-box glass large">
+          <h3>💡 Cevap Yaz</h3>
+          <div class="user-info-bar">👤 {{ currentUser.name }}</div>
+          <textarea v-model="answerData.text" rows="4" placeholder="Cevabınız..."></textarea>
+          <div class="modal-buttons"><button @click="submitAnswer" class="btn-primary">Gönder</button><button @click="showAnswerModal = false" class="btn-text">İptal</button></div>
+        </div>
+      </div>
+
+      <header class="navbar">
+        <div class="brand"><img :src="schoolSettings.logo" class="logo animate-pop"><div><h1>DİGİTAL İMECE : ADAB</h1><p>{{ schoolSettings.name }}</p></div></div>
+        <div class="nav-actions">
+          <button v-if="currentUser && currentUser.role==='admin'" @click="showStats = !showStats" class="icon-btn">📊</button>
+          <button v-if="currentUser && currentUser.role==='admin'" @click="showSettingsModal=true" class="icon-btn">⚙️</button>
+          
+          <button v-if="!currentUser" @click="showLoginModal=true" class="login-btn pulse">Giriş Yap</button>
+          <button v-else @click="logout" class="icon-btn">🔓</button>
+        </div>
+      </header>
+
+      <main class="scrollable-content">
+        <div v-if="showStats && currentUser.role==='admin'" class="animate-fade-in">
+          <div class="card chart-container"><h3>📈 Analiz</h3><div class="chart-wrapper"><Pie :data="chartData" :options="{maintainAspectRatio:false}" /></div></div>
+          <div class="card ai-box" style="text-align:center;"><span class="badge ai">🤖 NotebookLM</span><button @click="downloadReport" class="btn-primary full mt-2">📥 Veri İndir</button></div>
+        </div>
+
+        <div v-else class="animate-fade-in">
+          <div class="top-controls">
+             <button @click="currentUser ? showAskModal = true : alert('Lütfen giriş yapın!')" class="btn-ask-main pulse">➕ SORU SOR</button>
+             <div class="filter-bar glass-card"><div class="filter-icon">🔍</div><input v-model="searchQuery" placeholder="Ara..." class="search-input"><select v-model="selectedSubjectFilter" class="filter-select"><option value="Tümü">Dersler</option><option v-for="s in schoolSettings.subjects" :key="s">{{ s }}</option></select></div>
+          </div>
+
+          <div class="feed">
+            <div v-for="q in filteredQuestions" :key="q.id" class="card post glass-card" :class="q.role === 'Öğretmen' ? 'teacher-glow' : ''">
+              <div v-if="currentUser && currentUser.role==='admin'" class="admin-toolbar"><span v-if="q.isApproved" class="status-ok">✅ YAYINDA</span><span v-else class="status-wait blink">⚠️ ONAY BEKLİYOR</span><div class="admin-btns"><button v-if="!q.isApproved" @click="soruOnayla(q.id)" class="btn-mini ok">✓</button><button @click="soruSil(q.id)" class="btn-mini del">🗑️</button></div></div>
+              <div class="post-header"><div class="badges"><span v-if="q.role === 'Öğretmen'" class="badge teacher">👨‍🏫 Hoca</span><span v-else class="badge grade">{{ q.grade }}</span><span class="badge subject">{{ q.subject }}</span></div><span class="status" :class="q.isAnswerVerified ? 'solved' : 'pending'">{{ q.isAnswerVerified ? '✅ TAMAM' : (q.cevap ? '⚖️ İNCELEMEDE' : '⏳ BEKLİYOR') }}</span></div>
+              <div class="post-body"><strong>{{ q.sender }}:</strong> {{ q.content }}</div>
+              <div v-if="q.cevap" class="post-answer" :class="{'verified': q.isAnswerVerified}"><div class="ans-header"><span>💡 <b>{{ q.cevaplayan }}</b>:</span><span v-if="q.isAnswerVerified" class="verified-badge">🌟 Doğru</span></div><p>{{ q.cevap }}</p><div v-if="currentUser && currentUser.role==='admin' && !q.isAnswerVerified" class="mt-2"><button @click="cevapDogrula(q.id)" class="btn-mini full ok">🏅 CEVABI ONAYLA</button></div></div>
+              <button v-else-if="q.isApproved" @click="openAnswerModal(q.id)" class="btn-outline full">Cevap Yaz ✍️</button>
+            </div>
+            <div v-if="filteredQuestions.length === 0" class="empty-search">🔍 Kayıt bulunamadı.</div>
+          </div>
+        </div>
+      </main>
+
+      <footer class="double-footer">
+        <div class="marquee-wrapper" :style="{ backgroundColor: schoolSettings.styles.leaderboardBg, color: schoolSettings.styles.leaderboardColor, height: '35px' }"><div class="marquee-content" :style="{ fontSize: schoolSettings.styles.leaderboardSize + 'px' }">{{ leaderboardString }} &nbsp;&nbsp;&nbsp; • &nbsp;&nbsp;&nbsp; {{ leaderboardString }}</div></div>
+        <div class="marquee-wrapper" :style="{ backgroundColor: schoolSettings.styles.quoteBg, color: schoolSettings.styles.quoteColor, height: '40px' }"><div class="marquee-content slow" :style="{ fontSize: schoolSettings.styles.quoteSize + 'px' }">{{ currentDisplayQuote }} &nbsp;&nbsp;&nbsp; • &nbsp;&nbsp;&nbsp; {{ currentDisplayQuote }}</div></div>
+      </footer>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Merriweather:wght@300;400;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@300;400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Patrick+Hand&display=swap');
+
+/* YENİ: AUTH STİLLERİ */
+.auth-tabs { display: flex; border-bottom: 2px solid #eee; margin-bottom: 15px; }
+.auth-tabs button { flex: 1; padding: 10px; background: none; border: none; font-weight: bold; color: #aaa; cursor: pointer; transition: 0.3s; border-bottom: 3px solid transparent; }
+.auth-tabs button.active { color: #6c5ce7; border-bottom-color: #6c5ce7; }
+.note { font-size: 0.8em; color: #e67e22; margin-top: 5px; display: block; text-align: center; }
+.row-2 { display: flex; gap: 10px; }
+.login-btn { background: #2d3436; color: white; border: none; padding: 5px 12px; border-radius: 20px; font-size: 0.8rem; cursor: pointer; font-weight: bold; }
+.user-info-bar { background: #e3f2fd; padding: 10px; border-radius: 8px; margin-bottom: 10px; color: #1565c0; font-weight: bold; text-align: center; }
+.pending-item { display: flex; justify-content: space-between; align-items: center; background: white; padding: 8px; margin-bottom: 5px; border-radius: 6px; border: 1px solid #ffcc80; }
+.action-btns { display: flex; gap: 5px; }
+
+/* LAYOUT */
+.main-wrapper { width: 100%; height: 100vh; overflow: hidden; background: linear-gradient(135deg, #e0c3fc 0%, #8ec5fc 100%); display: flex; justify-content: center; }
+.app-frame { width: 100%; height: 100%; background: #f8f9fa; display: flex; flex-direction: column; position: relative; max-width: 600px; box-shadow: 0 0 40px rgba(0,0,0,0.3); }
+@media (max-width: 600px) { .app-frame { max-width: 100%; box-shadow: none; } }
+
+/* HEADER */
+.navbar { flex-shrink: 0; padding: 0.8rem 1rem; background: white; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; z-index: 10; }
+.brand { display: flex; align-items: center; gap: 8px; }
+.logo { height: 2.5rem; }
+.brand h1 { font-size: 1em; margin: 0; color: #2d3436; font-weight: 700; }
+.brand p { font-size: 0.7em; margin: 0; color: #636e72; }
+
+/* SCROLL AREA */
+.scrollable-content { flex-grow: 1; overflow-y: auto; padding: 1rem; background: #f1f2f6; scrollbar-width: thin; }
+
+/* FOOTER */
+.double-footer { flex-shrink: 0; display: flex; flex-direction: column; width: 100%; }
+.marquee-wrapper { display: flex; align-items: center; overflow: hidden; white-space: nowrap; font-weight: 500; border-top: 1px solid rgba(255,255,255,0.1); }
+.marquee-content { display: inline-block; padding-left: 100%; animation: scrollLeft 25s linear infinite; }
+.marquee-content.slow { animation-duration: 35s; }
+@keyframes scrollLeft { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
+
+/* UI */
+.glass-card { background: white; border-radius: 10px; padding: 1rem; margin-bottom: 1rem; box-shadow: 0 2px 5px rgba(0,0,0,0.03); border: 1px solid #fff; }
+.filter-bar { display: flex; gap: 0.5rem; align-items: center; padding: 0.6rem !important; margin-bottom: 0; background: white; border-radius: 10px; }
+.search-input { flex: 1; border: 1px solid #eee; padding: 0.6rem; border-radius: 6px; background: #f9f9f9; font-size: 1em; }
+.filter-select { padding: 0.6rem; border-radius: 6px; border: 1px solid #eee; background: #f9f9f9; font-size: 0.9em; }
+.top-controls { display: flex; flex-direction: column; gap: 0.8rem; margin-bottom: 1.2rem; }
+.btn-ask-main { background: linear-gradient(90deg, #6c5ce7, #a29bfe); color: white; border: none; padding: 0.8rem; border-radius: 12px; font-weight: bold; font-size: 1.1em; cursor: pointer; box-shadow: 0 4px 15px rgba(108, 92, 231, 0.4); }
+.pulse { animation: pulse 2s infinite; }
+@keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.02); } 100% { transform: scale(1); } }
+.post { border-left: 3px solid #dfe6e9; padding: 1rem !important; }
+.post.teacher-glow { border-left-color: #a29bfe; background: #fdfcff; }
+.post-header { display: flex; justify-content: space-between; font-size: 0.8em; margin-bottom: 0.5rem; }
+.badges { display: flex; gap: 4px; }
+.badge { padding: 2px 6px; border-radius: 4px; color: white; font-weight: 600; font-size: 0.7em; }
+.badge.grade { background: #ff7675; } .badge.subject { background: #636e72; } .badge.teacher { background: #6c5ce7; }
+.status { font-weight: bold; font-size: 0.8em; } .status.solved { color: #00b894; } .status.pending { color: #fdcb6e; }
+.post-body { font-size: 1em; color: #2d3436; margin-bottom: 0.8rem; }
+.post-answer { background: #e0f7fa; padding: 0.8rem; border-radius: 6px; font-size: 0.95em; margin-top: 0.5rem; }
+.post-answer.verified { background: #e8f8f5; border-left: 3px solid #00b894; }
+.verified-badge { background: #00b894; color: white; padding: 1px 4px; border-radius: 3px; font-size: 0.7em; margin-left: 5px; }
+.admin-toolbar { display: flex; justify-content: space-between; background: #fff3cd; padding: 0.4rem; border-radius: 4px; margin-bottom: 0.5rem; font-size: 0.8em; align-items: center; }
+.btn-mini { border: none; border-radius: 3px; width: 1.8rem; height: 1.8rem; cursor: pointer; margin-left: 4px; color: white; display: flex; align-items: center; justify-content: center; }
+.btn-mini.ok { background: #00b894; } .btn-mini.del { background: #ff7675; } .btn-mini.full { width: 100%; margin: 0; height: 2rem; font-size: 0.9em; }
+.blink { animation: blinker 1s linear infinite; color: #d63031; font-weight: bold; }
+@keyframes blinker { 50% { opacity: 0; } }
+.modern-input { width: 100%; padding: 0.8rem; border: 1px solid #eee; border-radius: 8px; margin-bottom: 0.8rem; font-family: inherit; font-size: 1em; background: #f9f9f9; }
+.btn-gradient { background: linear-gradient(90deg, #6c5ce7, #a29bfe); color: white; border: none; padding: 0.8rem; border-radius: 8px; width: 100%; font-weight: bold; cursor: pointer; font-size: 1em; }
+.btn-outline { background: transparent; border: 1px solid #ccc; padding: 0.5rem; border-radius: 6px; cursor: pointer; width: 100%; color: #555; font-size: 0.9em; }
+.icon-btn { background: none; border: none; font-size: 1.4em; cursor: pointer; margin-left: 0.5rem; color: #555; }
+.toast-notification { position: fixed; top: 1rem; left: 50%; transform: translateX(-50%); background: #00b894; color: white; padding: 0.5rem 1rem; border-radius: 20px; z-index: 2000; font-weight: bold; font-size: 0.9em; }
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(2px); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.modal-box { background: white; padding: 1.5rem; border-radius: 10px; width: 90%; max-width: 400px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
+.modal-buttons { display: flex; justify-content: flex-end; gap: 10px; margin-top: 1rem; }
+.btn-primary { background: #2d3436; color: white; border: none; padding: 0.5rem 1rem; border-radius: 6px; cursor: pointer; font-size: 1em; }
+.btn-text { background: none; border: none; cursor: pointer; color: #636e72; font-size: 1em; }
+.pool-list { max-height: 120px; overflow-y: auto; background: #f1f1f1; padding: 5px; margin-top: 5px; font-size: 0.9em; }
+.pool-item { display: flex; justify-content: space-between; border-bottom: 1px solid #ddd; padding: 4px 0; }
+.trash-btn { background: none; border: none; cursor: pointer; font-size: 0.9em; }
+.full { width: 100%; }
+.mt-2 { margin-top: 0.5rem; } .mt-4 { margin-top: 1rem; }
+</style>
