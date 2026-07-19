@@ -144,8 +144,17 @@ service cloud.firestore {
         && request.resource.data.moderationStatus == 'pending'
         && request.resource.data.likes == 0
         && request.resource.data.keys().hasOnly([
-          'sender', 'senderClass', 'senderId', 'senderRole', 'subject', 'classLevel', 'content', 'isApproved', 'isRejected', 'moderationStatus', 'likes', 'created_at'
-        ]);
+          'sender', 'senderClass', 'senderId', 'senderRole', 'subject', 'classLevel', 'content', 'topicTag',
+          'isApproved', 'isRejected', 'moderationStatus', 'likes', 'created_at'
+        ])
+        && (
+          !('topicTag' in request.resource.data)
+          || (
+            request.resource.data.topicTag is string
+            && request.resource.data.topicTag.size() > 0
+            && request.resource.data.topicTag.size() <= 40
+          )
+        );
       allow update: if canModerateSubject(resource.data.subject)
         || (
           isApprovedActiveUser()
@@ -190,8 +199,16 @@ service cloud.firestore {
           && resource.data.senderId == request.auth.uid
           && resource.data.answerApproved == true
           && resource.data.answerAccepted != true
-          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['answerAccepted', 'acceptedAt'])
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['answerAccepted', 'acceptedAt', 'learnedNote'])
           && request.resource.data.answerAccepted == true
+          && (
+            !('learnedNote' in request.resource.data)
+            || (
+              request.resource.data.learnedNote is string
+              && request.resource.data.learnedNote.size() > 0
+              && request.resource.data.learnedNote.size() <= 300
+            )
+          )
         )
         || (
           isApprovedActiveUser()

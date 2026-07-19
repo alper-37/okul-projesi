@@ -8,6 +8,13 @@ import {
 import { collection, onSnapshot, query, orderBy, addDoc, updateDoc, doc, setDoc, getDoc, getDocs, serverTimestamp, where, deleteDoc, increment, writeBatch, limit } from 'firebase/firestore';
 import { auth, adminAuth, db } from './firebase';
 import ToastNotification from './components/ToastNotification.vue';
+import {
+  aggregateFrequentTopics,
+  computeContributionIndex,
+  normalizeTopicTag,
+  suggestionsForSubject,
+  topicTrendSplit,
+} from './composables/pedagogy';
 
 // Chart.js: lazy load only when stats panel opens
 const chartReady = shallowRef(false);
@@ -65,7 +72,9 @@ const adminStudentForm = ref({ name: '', email: '', password: '', class: '', num
 const teacherApprovals = ref([]);
 const newSubject = ref('');
 const newClass = ref('');
-const newQuestion = ref({ subject: '', classLevel: '', content: '' });
+const newQuestion = ref({ subject: '', classLevel: '', content: '', topicTag: '' });
+const learnNoteDrafts = ref({});
+const topicTagCustom = ref('');
 const answerText = ref({});
 const editQuestionText = ref({});
 const editAnswerText = ref({});
@@ -1112,10 +1121,19 @@ watch(() => newQuestion.value.content, (newVal) => {
 
 // --- 🤖 YAPAY ZEKA: ROZET SİSTEMİ ---
 const getUserBadge = (points) => {
+  if (points > 200) return '👑 Dahi';
   if (points > 100) return '🏆 Üstad';
   if (points > 50) return '⭐ Kıdemli';
   if (points > 20) return '💡 Gayretli';
-  return '🌱 Yeni';
+  if (points > 5) return '🌱 Filiz';
+  return '🆕 Yeni';
+};
+
+const topicSuggestions = computed(() => suggestionsForSubject(newQuestion.value.subject));
+
+const pickTopicSuggestion = (tag) => {
+  newQuestion.value.topicTag = tag;
+  topicTagCustom.value = '';
 };
 
 const relevantPendingQuestions = computed(() => (
@@ -2360,7 +2378,16 @@ const handleSendAnswer = async (q) => {
 
 const acceptAnswer = async (q) => {
   if (q.answerAccepted) return;
-  await updateDoc(doc(db, "questions", q.id), { answerAccepted: true, acceptedAt: serverTimestamp() });
+  const note = String(learnNoteDrafts.value[q.id] || '').trim().slice(0, 300);
+  const payload = { answerAccepted: true, acceptedAt: serverTimestamp() };
+  if (note) payload.learnedNote = note;
+  try {
+    await updateDoc(doc(db, "questions", q.id), payload);
+    delete learnNoteDrafts.value[q.id];
+    toast.success(note ? 'Çözüm kabul edildi. Öğrenme notun kaydedildi.' : 'Çözüm kabul edildi.');
+  } catch (error) {
+    toast.error(functionErrorMessage(error, 'Çözüm kabul edilemedi.'));
+  }
 };
 
 const thankAnswer = async (q) => {
@@ -2405,7 +2432,8 @@ const handleCreateQuestion = async () => {
   const payload = {
     subject: String(newQuestion.value.subject || '').trim(),
     classLevel: String(newQuestion.value.classLevel || '').trim(),
-    content: String(newQuestion.value.content || '').trim()
+    content: String(newQuestion.value.content || '').trim(),
+    topicTag: normalizeTopicTag(newQuestion.value.topicTag || topicTagCustom.value)
   };
   if (!payload.subject || !payload.classLevel || payload.content.length < 5) {
     toast.warning("Ders, sınıf ve en az 5 karakterlik soru gerekli.");
@@ -2426,6 +2454,7 @@ const handleCreateQuestion = async () => {
       likes: 0,
       created_at: serverTimestamp()
     };
+    if (payload.topicTag) questionDoc.topicTag = payload.topicTag;
     if (currentUser.value.class) {
       questionDoc.senderClass = currentUser.value.class;
     }
@@ -2438,7 +2467,8 @@ const handleCreateQuestion = async () => {
     });
 
     showAskModal.value = false;
-    newQuestion.value = { subject: '', classLevel: '', content: '' };
+    newQuestion.value = { subject: '', classLevel: '', content: '', topicTag: '' };
+    topicTagCustom.value = '';
     similarQuestionFound.value = null;
     similarQuestions.value = [];
   } catch (error) {
@@ -2643,8 +2673,10 @@ const downloadNotebook = () => {
     data: approved.map(q => ({
       ders: q.subject,
       seviye: q.classLevel,
+      konu: q.topicTag || '',
       soru: q.content,
       cevap: q.cevap || "Henüz cevaplanmamış",
+      ogrenme_notu: q.learnedNote || '',
       begeni: q.likes || 0
     }))
   };
@@ -2656,7 +2688,7 @@ const downloadNotebook = () => {
 const exportStatsCSV = () => {
   if (!isLeadershipUser()) { toast.warning("Bu işlem için yönetici yetkisi gerekir."); return; }
   const rows = [
-    ['Ders', 'Sınıf', 'Soran', 'Durum', 'Tarih', 'Cevap Süresi(sa)'].join(';')
+    ['Ders', 'Konu', 'Sınıf', 'Soran', 'Durum', 'Tarih', 'Cevap Süresi(sa)', 'Öğrenme Notu'].join(';')
   ];
   statsQuestions.value.forEach(q => {
     const created = q.created_at?.toDate ? q.created_at.toDate().getTime() : 0;
@@ -2666,11 +2698,13 @@ const exportStatsCSV = () => {
       : '';
     rows.push([
       q.subject || '',
+      q.topicTag || '',
       q.classLevel || '',
       q.sender || '',
       q.isApproved ? 'Onaylı' : 'Beklemede',
       q.created_at?.toDate ? q.created_at.toDate().toLocaleDateString('tr-TR') : '',
-      respHours
+      respHours,
+      (q.learnedNote || '').replace(/;/g, ',')
     ].join(';'));
   });
   const bom = '\uFEFF';
@@ -2740,9 +2774,15 @@ const exportStatsPDF = () => {
     html += `</tbody></table>`;
   };
   renderTable('📘 Top Dersler', ['#', 'Ders', 'Adet'], topSubjects.value.map((s, i) => [i + 1, s[0], s[1]]));
+  renderTable('🏷️ Sık Konular', ['#', 'Ders', 'Konu', 'Adet', 'Cevapsız'], frequentTopics.value.map((t, i) => [i + 1, t.subject, t.topic, t.count, t.unanswered]));
   renderTable('🏫 Top Sınıflar', ['#', 'Sınıf', 'Adet'], topClasses.value.map((s, i) => [i + 1, s[0], s[1]]));
   renderTable('👤 Top Soru Soran', ['#', 'Öğrenci', 'Adet'], topAskers.value.map((s, i) => [i + 1, s[0], s[1]]));
+  renderTable('🌟 Katkı İndeksi', ['#', 'Öğrenci', 'İndeks', 'Rozet'], contributionLeaders.value.map((s, i) => [i + 1, s.name, s.index, s.badge]));
   renderTable('👨‍🏫 Top Cevaplayan', ['#', 'Öğretmen', 'Adet'], topResponders.value.map((s, i) => [i + 1, s[0], s[1]]));
+  if (anonymousTopicInsights.value.length) {
+    renderTable('🔬 Anonim Konu Eğilimi (1. yarı → 2. yarı)', ['Konu', 'İlk', 'Son', 'Δ'],
+      anonymousTopicInsights.value.map((t) => [t.topic, t.firstHalf, t.secondHalf, (t.delta >= 0 ? '+' : '') + t.delta]));
+  }
   
   // Ders yanıt süreleri
   if (subjectResponseTime.value.length) {
@@ -3704,6 +3744,75 @@ const teacherPerformance = computed(() => {
   })).sort((a, b) => b.answers - a.answers);
 });
 
+// --- PEDAGOJİ: SIK KONULAR / KATKI / ANONİM BİLİM ---
+const frequentTopics = computed(() => aggregateFrequentTopics(dashFiltered.value, 15));
+
+const topicStatsData = computed(() => {
+  const top = frequentTopics.value.slice(0, 8);
+  const accent = schoolSettings.value?.styles?.accentColor || '#16a085';
+  return {
+    labels: top.map((t) => (t.topic.length > 14 ? t.topic.slice(0, 14) + '…' : t.topic)),
+    datasets: [{
+      label: 'Soru',
+      data: top.map((t) => t.count),
+      backgroundColor: top.map((_, i) => (i % 2 ? accent : accent + '99')),
+    }],
+  };
+});
+
+const contributionLeaders = computed(() => {
+  const asked = new Map();
+  const accepted = new Map();
+  const thanks = new Map();
+  dashFiltered.value.forEach((q) => {
+    if (q.senderId) asked.set(q.senderId, (asked.get(q.senderId) || 0) + 1);
+    if (q.respId && q.answerAccepted) accepted.set(q.respId, (accepted.get(q.respId) || 0) + 1);
+    if (q.respId) thanks.set(q.respId, (thanks.get(q.respId) || 0) + (q.answerThanks || 0));
+  });
+  return students.value
+    .filter((s) => s.isApproved !== false)
+    .map((s) => {
+      const index = computeContributionIndex({
+        points: s.points || 0,
+        questionsAsked: asked.get(s.id) || 0,
+        answersAccepted: accepted.get(s.id) || 0,
+        thanksReceived: thanks.get(s.id) || 0,
+      });
+      return {
+        id: s.id,
+        name: s.name,
+        cls: s.class || '-',
+        points: s.points || 0,
+        index,
+        badge: getUserBadge(s.points || 0),
+      };
+    })
+    .filter((s) => s.index > 0)
+    .sort((a, b) => b.index - a.index)
+    .slice(0, 15);
+});
+
+const anonymousTopicInsights = computed(() => topicTrendSplit(dashFiltered.value));
+
+const anonymousScienceSummary = computed(() => {
+  const pool = dashFiltered.value;
+  const tagged = pool.filter((q) => normalizeTopicTag(q.topicTag));
+  const learned = pool.filter((q) => q.learnedNote);
+  const acceptRate = pool.filter((q) => q.cevap).length
+    ? Math.round((pool.filter((q) => q.answerAccepted).length / pool.filter((q) => q.cevap).length) * 100)
+    : 0;
+  return {
+    total: pool.length,
+    tagged: tagged.length,
+    tagCoverage: pool.length ? Math.round((tagged.length / pool.length) * 100) : 0,
+    learnedNotes: learned.length,
+    acceptRate,
+    hotTopics: frequentTopics.value.slice(0, 5),
+    cooling: anonymousTopicInsights.value.filter((t) => t.delta < 0).slice(0, 5),
+    rising: anonymousTopicInsights.value.filter((t) => t.delta > 0).slice(0, 5),
+  };
+});
+
 // --- ÖĞRETMEN CEVAP DAĞILIMI BAR CHART ---
 const teacherBarData = computed(() => {
   const top = teacherPerformance.value.slice(0, 8);
@@ -4047,6 +4156,8 @@ const colorForLabel = (label) => {
           <button :class="{ active: statsTab === 'overview' }" @click="statsTab = 'overview'">📊 Genel</button>
           <button :class="{ active: statsTab === 'charts' }" @click="statsTab = 'charts'">📈 Grafikler</button>
           <button :class="{ active: statsTab === 'analysis' }" @click="statsTab = 'analysis'">🔬 Analiz</button>
+          <button :class="{ active: statsTab === 'topics' }" @click="statsTab = 'topics'">🏷️ Konular</button>
+          <button :class="{ active: statsTab === 'science' }" @click="statsTab = 'science'">🧬 Bilim</button>
           <button :class="{ active: statsTab === 'students' }" @click="statsTab = 'students'">👤 Öğrenci</button>
           <button :class="{ active: statsTab === 'teachers' }" @click="statsTab = 'teachers'">👨‍🏫 Öğretmen</button>
           <button :class="{ active: statsTab === 'engagement' }" @click="statsTab = 'engagement'">🎯 Etkileşim</button>
@@ -4166,7 +4277,10 @@ const colorForLabel = (label) => {
             <div class="c-box"><h4 style="margin:0 0 8px; font-size:0.8rem;">👨‍🏫 Öğretmen Cevap Dağılımı</h4><component :is="BarChart" :data="teacherBarData" :options="barChartOptions" /></div>
           </div>
           <div v-if="chartReady" class="charts-grid-2" style="margin-top:10px;">
-            <div class="c-box"><h4 style="margin:0 0 8px; font-size:0.8rem;">🎯 Öğrenci Segmentasyonu</h4><component :is="DoughnutChart" :data="segmentDoughnutData" :options="chartOptions" /></div>
+            <div class="c-box"><h4 style="margin:0 0 8px; font-size:0.8rem;">🏷️ Sık Konu Etiketleri</h4>
+              <component v-if="frequentTopics.length" :is="BarChart" :data="topicStatsData" :options="barChartOptions" />
+              <div v-else style="color:#94a3b8;font-size:0.85rem;padding:12px;">Henüz konu etiketi yok. Yeni sorularda konu seçin.</div>
+            </div>
             <div class="c-box">
               <h4 style="margin:0 0 8px; font-size:0.8rem;">📊 Moderasyon Oranları</h4>
               <div class="mod-stats-grid">
@@ -4196,6 +4310,92 @@ const colorForLabel = (label) => {
                 <span v-for="h in 24" :key="h" class="heatmap-hour">{{ h - 1 }}</span>
               </div>
             </div>
+          </div>
+          <div v-if="chartReady" class="charts-grid-2" style="margin-top:10px;">
+            <div class="c-box"><h4 style="margin:0 0 8px; font-size:0.8rem;">🎯 Öğrenci Segmentasyonu</h4><component :is="DoughnutChart" :data="segmentDoughnutData" :options="chartOptions" /></div>
+          </div>
+        </div>
+
+        <!-- ===== KONULAR TAB (PEDAGOJİ) ===== -->
+        <div v-if="statsTab === 'topics'">
+          <div class="stats-kpi">
+            <div class="kpi-item">🏷️ Etiketli soru oranı: <b>{{ anonymousScienceSummary.tagCoverage }}%</b> ({{ anonymousScienceSummary.tagged }}/{{ anonymousScienceSummary.total }})</div>
+            <div class="kpi-item">📝 Öğrenme notu: <b>{{ anonymousScienceSummary.learnedNotes }}</b></div>
+          </div>
+          <div class="stats-list" v-if="frequentTopics.length">
+            <b>🔥 Sık Konular / Pedagojik Odak</b>
+            <table class="stats-table" style="margin-top:8px;">
+              <thead><tr><th>#</th><th>Ders</th><th>Konu</th><th>Adet</th><th>Cevapsız</th><th>Bekleyen</th></tr></thead>
+              <tbody>
+                <tr v-for="(t, idx) in frequentTopics" :key="t.subject + t.topic">
+                  <td>{{ idx + 1 }}</td>
+                  <td>{{ t.subject }}</td>
+                  <td><b>{{ t.topic }}</b></td>
+                  <td>{{ t.count }}</td>
+                  <td :style="{ color: t.unanswered ? '#ef4444' : '#16a085' }">{{ t.unanswered }}</td>
+                  <td>{{ t.pending }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <small style="color:#94a3b8;display:block;margin-top:6px;">Cevapsız yüksek konular zümre tekrarı / ders içi pekiştirme için önceliklidir.</small>
+          </div>
+          <div v-else style="text-align:center;padding:20px;color:#94a3b8;">Konu etiketli soru yok. Öğrenciler soru sorarken konu seçtikçe burası dolar.</div>
+          <div v-if="chartReady && frequentTopics.length" class="c-box" style="margin-top:12px;">
+            <h4 style="margin:0 0 8px;font-size:0.8rem;">Grafik: Sık Konular</h4>
+            <component :is="BarChart" :data="topicStatsData" :options="barChartOptions" />
+          </div>
+        </div>
+
+        <!-- ===== BİLİM / ANONİM ANALİTİK ===== -->
+        <div v-if="statsTab === 'science'">
+          <div class="stats-kpi">
+            <div class="kpi-item">🔬 Örneklem: <b>{{ anonymousScienceSummary.total }}</b> soru (kişisel isim kullanılmaz)</div>
+            <div class="kpi-item">✅ Cevap kabul oranı: <b>{{ anonymousScienceSummary.acceptRate }}%</b></div>
+            <div class="kpi-item">🏷️ Konu kapsama: <b>{{ anonymousScienceSummary.tagCoverage }}%</b></div>
+          </div>
+          <div class="charts-grid-2" style="margin-top:10px;">
+            <div class="stats-list">
+              <b>📈 Yükselen konular (2. yarıda artış)</b>
+              <table class="stats-table" v-if="anonymousScienceSummary.rising.length" style="margin-top:6px;">
+                <thead><tr><th>Konu</th><th>1. yarı</th><th>2. yarı</th><th>Δ</th></tr></thead>
+                <tbody>
+                  <tr v-for="t in anonymousScienceSummary.rising" :key="'up'+t.topic">
+                    <td>{{ t.topic }}</td><td>{{ t.firstHalf }}</td><td>{{ t.secondHalf }}</td>
+                    <td style="color:#16a085;font-weight:700;">+{{ t.delta }}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div v-else style="color:#94a3b8;padding:8px;font-size:0.85rem;">Yeterli etiketli zaman serisi yok.</div>
+            </div>
+            <div class="stats-list">
+              <b>📉 Soğuyan konular (azalış — olası öğrenme kazanımı)</b>
+              <table class="stats-table" v-if="anonymousScienceSummary.cooling.length" style="margin-top:6px;">
+                <thead><tr><th>Konu</th><th>1. yarı</th><th>2. yarı</th><th>Δ</th></tr></thead>
+                <tbody>
+                  <tr v-for="t in anonymousScienceSummary.cooling" :key="'dn'+t.topic">
+                    <td>{{ t.topic }}</td><td>{{ t.firstHalf }}</td><td>{{ t.secondHalf }}</td>
+                    <td style="color:#3b82f6;font-weight:700;">{{ t.delta }}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <div v-else style="color:#94a3b8;padding:8px;font-size:0.85rem;">Yeterli veri yok.</div>
+            </div>
+          </div>
+          <div class="stats-list" style="margin-top:10px;">
+            <b>🌟 Katkı İndeksi (puan + kabul + teşekkür ağırlıklı)</b>
+            <table class="stats-table" v-if="contributionLeaders.length" style="margin-top:6px;">
+              <thead><tr><th>#</th><th>Öğrenci</th><th>Sınıf</th><th>Rozet</th><th>İndeks</th></tr></thead>
+              <tbody>
+                <tr v-for="(s, idx) in contributionLeaders" :key="s.id">
+                  <td>{{ idx + 1 }}</td>
+                  <td><b>{{ s.name }}</b></td>
+                  <td>{{ s.cls }}</td>
+                  <td>{{ s.badge }}</td>
+                  <td><b style="color:var(--accent)">{{ s.index }}</b></td>
+                </tr>
+              </tbody>
+            </table>
+            <small style="color:#94a3b8;">İndeks = Puan + Soru×4 + Kabul×12 + Teşekkür×3</small>
           </div>
         </div>
 
@@ -4347,7 +4547,21 @@ const colorForLabel = (label) => {
             </table>
             <small style="color:#94a3b8;display:block;margin-top:4px;">Skor = Soru×10 + Beğeni×5</small>
           </div>
-          <div v-else style="text-align:center;padding:20px;color:#94a3b8;">Henüz yeterli veri yok.</div>
+          <div class="stats-list" style="margin-top:12px;" v-if="contributionLeaders.length">
+            <b>🌟 Katkı İndeksi Liderliği</b>
+            <table class="stats-table" style="margin-top:6px;">
+              <thead><tr><th>#</th><th>Öğrenci</th><th>Rozet</th><th>İndeks</th></tr></thead>
+              <tbody>
+                <tr v-for="(s, idx) in contributionLeaders.slice(0, 10)" :key="'c'+s.id">
+                  <td>{{ idx + 1 }}</td>
+                  <td>{{ s.name }}</td>
+                  <td>{{ s.badge }}</td>
+                  <td><b>{{ s.index }}</b></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div v-if="!studentActivity.length && !contributionLeaders.length" style="text-align:center;padding:20px;color:#94a3b8;">Henüz yeterli veri yok.</div>
         </div>
 
         <!-- ===== ÖĞRETMEN TAB ===== -->
@@ -4374,6 +4588,21 @@ const colorForLabel = (label) => {
             </table>
           </div>
           <div v-else style="text-align:center;padding:20px;color:#94a3b8;">Henüz öğretmen verisi yok.</div>
+          <div class="stats-list" style="margin-top:12px;" v-if="frequentTopics.length">
+            <b>🎯 Öğretmen Odak: Sık / Cevapsız Konular</b>
+            <table class="stats-table" style="margin-top:8px;">
+              <thead><tr><th>Ders</th><th>Konu</th><th>Adet</th><th>Cevapsız</th></tr></thead>
+              <tbody>
+                <tr v-for="t in frequentTopics.slice(0, 10)" :key="'teach'+t.subject+t.topic">
+                  <td>{{ t.subject }}</td>
+                  <td><b>{{ t.topic }}</b></td>
+                  <td>{{ t.count }}</td>
+                  <td :style="{ color: t.unanswered ? '#ef4444' : '#16a085', fontWeight: 700 }">{{ t.unanswered }}</td>
+                </tr>
+              </tbody>
+            </table>
+            <small style="color:#94a3b8;">Bu liste ders tekrarı ve etüt planı için kullanılabilir.</small>
+          </div>
         </div>
 
         <!-- ===== ETKİLEŞİM TAB ===== -->
@@ -4532,6 +4761,10 @@ const colorForLabel = (label) => {
             <div class="badges">
               <span class="badge" :style="{ backgroundColor: q.isApproved ? schoolSettings.styles.accentColor : q.isRejected ? '#dc2626' : '#f59e0b' }">{{ q.subject }}</span>
               <span v-if="q.classLevel" class="badge-class">{{ q.classLevel }}</span>
+              <span v-if="q.topicTag" class="badge-topic">🏷️ {{ q.topicTag }}</span>
+              <span v-if="q.answerAccepted" class="badge-status ok">✅ Çözüldü</span>
+              <span v-else-if="q.cevap && q.answerApproved" class="badge-status wait">💬 Cevaplı</span>
+              <span v-else-if="!q.isApproved && !q.isRejected" class="badge-status pending">⏳ Onay</span>
             </div>
             <div class="meta">
               <b>{{ q.sender }}</b> <small>({{ q.senderClass || 'Genel' }})</small>
@@ -4581,11 +4814,15 @@ const colorForLabel = (label) => {
               </div>
             </div>
             <p v-else>{{ q.cevap }}</p>
+            <div v-if="q.learnedNote" class="learned-note">📘 Öğrenci notu: {{ q.learnedNote }}</div>
             <div class="actions-compact">
               <button v-if="canModerateQuestion(q) && !q.answerApproved" @click="onayIslem(q, 'cevap')" class="btn-tiny ok">✔ Onayla</button>
               <button v-if="canModerateQuestion(q)" @click="rejectAnswer(q)" class="btn-tiny no">✖ Reddet</button>
               <button v-if="currentUser && (currentUser.id === q.respId || isLeadershipUser() || canModerateQuestion(q))" @click="startEditAnswer(q)" class="btn-tiny send">✏️ Düzenle</button>
-              <button v-if="currentUser && currentUser.id === q.senderId && q.answerApproved && !q.answerAccepted" @click="acceptAnswer(q)" class="btn-tiny ok">✅ Çözüm Kabul</button>
+              <div v-if="currentUser && currentUser.id === q.senderId && q.answerApproved && !q.answerAccepted" class="accept-block">
+                <input v-model="learnNoteDrafts[q.id]" class="input-tiny" maxlength="300" placeholder="Ne öğrendim? (opsiyonel)" />
+                <button @click="acceptAnswer(q)" class="btn-tiny ok">✅ Çözüm Kabul</button>
+              </div>
               <button
                 v-if="currentUser && q.answerApproved"
                 @click="thankAnswer(q)"
@@ -4707,6 +4944,25 @@ const colorForLabel = (label) => {
           <option value="" disabled selected>Sınıf Seviyesi</option>
           <option v-for="c in schoolSettings.classes" :key="c" :value="c">{{ c }}</option>
         </select>
+        <div v-if="newQuestion.subject" class="topic-picker">
+          <label>Konu / kazanım (pedagojik etiket)</label>
+          <div class="topic-chips">
+            <button
+              v-for="tag in topicSuggestions"
+              :key="tag"
+              type="button"
+              class="topic-chip"
+              :class="{ active: newQuestion.topicTag === tag }"
+              @click="pickTopicSuggestion(tag)"
+            >{{ tag }}</button>
+          </div>
+          <input
+            v-model="topicTagCustom"
+            maxlength="40"
+            placeholder="Veya kendi konu etiketinizi yazın…"
+            @input="newQuestion.topicTag = topicTagCustom"
+          />
+        </div>
         <textarea v-model="newQuestion.content" placeholder="Sorunuzu buraya yazın..." rows="4"></textarea>
         <button @click="handleCreateQuestion" class="btn-save-final" :style="{background:schoolSettings.styles.accentColor}">GÖNDER</button>
         <button @click="showAskModal=false" class="btn-close-final">Kapat</button>
@@ -5741,6 +5997,78 @@ const colorForLabel = (label) => {
   border-radius: 8px; 
   font-size: 0.65rem; 
   font-weight: 700; 
+}
+
+.badge-topic {
+  background: #ecfeff;
+  color: #0e7490;
+  border: 1px solid #a5f3fc;
+  padding: 3px 8px;
+  border-radius: 8px;
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+.badge-status {
+  padding: 3px 8px;
+  border-radius: 8px;
+  font-size: 0.62rem;
+  font-weight: 800;
+}
+.badge-status.ok { background: #d1fae5; color: #065f46; }
+.badge-status.wait { background: #e0e7ff; color: #3730a3; }
+.badge-status.pending { background: #fef3c7; color: #92400e; }
+
+.topic-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+.topic-picker label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #334155;
+}
+.topic-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.topic-chip {
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #0f172a;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.topic-chip.active {
+  background: #0f766e;
+  border-color: #0f766e;
+  color: #fff;
+}
+.learned-note {
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: #f0fdfa;
+  border: 1px dashed #5eead4;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  color: #115e59;
+}
+.accept-block {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+  margin-top: 4px;
+}
+.accept-block .input-tiny {
+  flex: 1;
+  min-width: 160px;
 }
 
 .meta { 
