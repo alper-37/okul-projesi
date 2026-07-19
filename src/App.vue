@@ -758,7 +758,7 @@ const buildRecoveredUserProfile = (user, role = 'student') => {
     archived: false,
     createdAt: serverTimestamp()
   };
-  if (role === 'teacher') {
+  if (STAFF_ROLES.includes(role)) {
     profile.subjects = [];
   }
   return profile;
@@ -791,7 +791,7 @@ const buildManagedUserProfile = ({
   if (role === 'student') {
     profile.class = String(studentClass || '').trim();
     profile.number = String(number || '').trim();
-  } else if (role === 'teacher') {
+  } else if (STAFF_ROLES.includes(role)) {
     profile.subjects = [];
   }
 
@@ -803,6 +803,10 @@ const isStaffRole = (role = '') => STAFF_ROLES.includes(String(role || '').trim(
 const isLeadershipUser = (user = currentUser.value) => Boolean(user && isLeadershipRole(user.role));
 const isTeacherUser = (user = currentUser.value) => Boolean(user && user.role === 'teacher');
 const isStaffUser = (user = currentUser.value) => Boolean(user && isStaffRole(user.role));
+const canHaveSubjects = (userOrRole = null) => {
+  const role = typeof userOrRole === 'string' ? userOrRole : userOrRole?.role;
+  return isStaffRole(role);
+};
 const canEditCriticalSettings = (user = currentUser.value) => Boolean(user && user.role === 'admin');
 const canManageUsers = (user = currentUser.value) => isLeadershipUser(user);
 const getRoleLabel = (role = '') => {
@@ -852,7 +856,7 @@ const syncRoleDraftMap = (draftRef, users = []) => {
 };
 const buildRoleChangeFields = (user, nextRole) => {
   const payload = { role: nextRole };
-  if (nextRole === 'teacher') {
+  if (canHaveSubjects(nextRole)) {
     payload.subjects = Array.isArray(user?.subjects) ? normalizeSubjectList(user.subjects) : [];
   } else if (nextRole === 'student') {
     payload.subjects = [];
@@ -875,7 +879,7 @@ const canModerateSubject = (subject, user = currentUser.value) => {
   const cleanSubject = String(subject || '').trim();
   if (!cleanSubject || !user) return false;
   if (isLeadershipUser(user)) return true;
-  if (user.role !== 'teacher') return false;
+  if (!canHaveSubjects(user)) return false;
   return getUserSubjects(user).includes(cleanSubject);
 };
 
@@ -910,9 +914,9 @@ const saveTeacherSubjects = async (teacherId) => {
   const subjects = normalizeSubjectList(teacherSubjectDrafts.value[teacherId]);
   try {
     await updateDoc(doc(db, "users", teacherId), { subjects });
-    toast.success("Öğretmen ders ataması güncellendi.");
+    toast.success("Ders ataması güncellendi.");
   } catch (error) {
-    const msg = functionErrorMessage(error, "Öğretmen dersleri kaydedilemedi.");
+    const msg = functionErrorMessage(error, "Ders ataması kaydedilemedi.");
     systemErrors.value.unshift(msg);
     toast.error(msg);
   }
@@ -1030,8 +1034,13 @@ const fillTeacherNotificationRecipientsFromTeachers = () => {
   const nextMap = {};
   schoolSettings.value.subjects.forEach((subject) => {
     const emails = teachers.value
-      .filter(teacher => teacher.role === 'teacher' && teacher.isApproved && !teacher.archived && normalizeSubjectList(teacher.subjects).includes(subject))
-      .map(teacher => teacher.email);
+      .filter(member => (
+        canHaveSubjects(member)
+        && member.isApproved
+        && !member.archived
+        && normalizeSubjectList(member.subjects).includes(subject)
+      ))
+      .map(member => member.email);
     const normalized = normalizeEmailList(emails).join(', ');
     if (normalized) nextMap[subject] = normalized;
   });
@@ -1039,7 +1048,7 @@ const fillTeacherNotificationRecipientsFromTeachers = () => {
     ...teacherNotificationSettings.value,
     recipientMap: nextMap
   };
-  toast.success("Ders alıcıları öğretmen atamalarından dolduruldu.");
+  toast.success("Ders alıcıları personel atamalarından dolduruldu.");
 };
 
 const getTeacherNotificationRecipientList = (subject) => {
@@ -3490,7 +3499,7 @@ const startStaffListeners = () => {
 
       teachers.value = teacherList;
       archivedStaff.value = archivedList;
-      syncTeacherSubjectDrafts(teacherList.filter(member => member.role === 'teacher'));
+      syncTeacherSubjectDrafts(teacherList.filter(member => canHaveSubjects(member)));
       syncRoleDraftMap(
         activeRoleDrafts,
         [
@@ -6043,7 +6052,7 @@ const colorForLabel = (label) => {
 
         <div v-if="settingsTab === 'people'" class="s-section">
           <h4>👥 Personel Yönetimi</h4>
-          <small>Ogretmenler sadece soru ve istatistik ekranlarini kullanir. Yonetici ve admin tum sistemi gorur.</small>
+          <small>Öğretmenlere ve derse giren yönetici/adminlere ders atanabilir. Yönetici ve admin tüm sistemi görür; öğrenci rolünde ders ataması yoktur.</small>
           <label style="margin-top: 10px;">Onaylı Personel:</label>
           <div v-for="t in teachers.filter(x => x.isApproved)" :key="t.id" class="stu-row">
             <div>
@@ -6057,15 +6066,15 @@ const colorForLabel = (label) => {
                   class="btn-tiny"
                   :class="teacherSubjectDrafts[t.id]?.includes(subject) ? 'ok' : 'send'"
                   @click="toggleTeacherSubject(t.id, subject)"
-                  :disabled="t.role !== 'teacher'"
+                  :disabled="!canHaveSubjects(t)"
                 >
                   {{ subject }}
                 </button>
               </div>
-              <small>Atanan dersler: {{ t.role === 'teacher' ? ((teacherSubjectDrafts[t.id] || []).join(', ') || 'Henüz yok') : 'Yonetici rollerinde ders atamasi gerekmez' }}</small>
+              <small>Atanan dersler: {{ canHaveSubjects(t) ? ((teacherSubjectDrafts[t.id] || []).join(', ') || 'Henüz yok') : 'Öğrenci rolünde ders ataması yok' }}</small>
             </div>
             <div>
-              <button v-if="t.role === 'teacher'" @click="saveTeacherSubjects(t.id)" class="btn-tiny ok">💾 Dersleri Kaydet</button>
+              <button v-if="canHaveSubjects(t)" @click="saveTeacherSubjects(t.id)" class="btn-tiny ok">💾 Dersleri Kaydet</button>
               <div v-if="canManageUsers()" class="actions-compact">
                 <button @click="changeUserRole(t, 'student')" class="btn-tiny send">Öğrenci</button>
                 <button @click="changeUserRole(t, 'teacher')" class="btn-tiny send">Öğretmen</button>
@@ -6116,7 +6125,7 @@ const colorForLabel = (label) => {
           <input v-model="teacherNotificationSettings.fromName" placeholder="Gönderen Adı">
           <input v-model="teacherNotificationSettings.siteUrl" placeholder="Yönlendirme URL'si (boşsa mevcut site)">
           <div class="row-flex" style="margin-top: 8px;">
-            <button class="btn-snap" @click="fillTeacherNotificationRecipientsFromTeachers">Öğretmenlerden Doldur</button>
+            <button class="btn-snap" @click="fillTeacherNotificationRecipientsFromTeachers">Personelden Doldur</button>
             <button class="btn-save-final" @click="saveTeacherNotificationSettings" :style="{background:schoolSettings.styles.accentColor}">💾 E-posta Ayarını Kaydet</button>
           </div>
           <small style="display:block; margin-top:8px;">

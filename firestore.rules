@@ -43,7 +43,7 @@ service cloud.firestore {
     }
 
     function hasAssignedTeacherSubject(subject) {
-      return isTeacher()
+      return isAdminOrTeacher()
         && currentUserData().keys().hasAny(['subjects'])
         && subject in currentUserData().subjects;
     }

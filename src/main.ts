@@ -36,7 +36,7 @@ const clearLegacyCaches = async () => {
     const keys = await caches.keys()
     await Promise.all(
       keys
-        .filter((key) => key.startsWith('adab-') && key !== 'adab-v8-20260720-roles')
+        .filter((key) => key.startsWith('adab-') && key !== 'adab-v9-20260720-mgr-subjects')
         .map((key) => caches.delete(key)),
     )
   }
