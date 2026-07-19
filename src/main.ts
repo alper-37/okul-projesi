@@ -36,7 +36,7 @@ const clearLegacyCaches = async () => {
     const keys = await caches.keys()
     await Promise.all(
       keys
-        .filter((key) => key.startsWith('adab-') && key !== 'adab-v5-20260719-patterns')
+        .filter((key) => key.startsWith('adab-') && key !== 'adab-v6-20260719-annfont')
         .map((key) => caches.delete(key)),
     )
   }

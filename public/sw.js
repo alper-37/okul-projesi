@@ -1,4 +1,4 @@
-const CACHE_NAME = 'adab-v5-20260719-patterns';
+const CACHE_NAME = 'adab-v6-20260719-annfont';
 
 // Do not precache index.html — hashed assets are addressed by network HTML.
 self.addEventListener('install', (event) => {

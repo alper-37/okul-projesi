@@ -246,7 +246,7 @@ function createEmptyOfflineCache() {
 const defaultSettings = {
   name: 'Taşköprü Anadolu İmam Hatip Lisesi',
   logo: 'https://img.icons8.com/color/96/graduation-cap.png',
-  announcement: '2026 Eğitim Öğretim Yılı Hayırlı Olsun.',
+  announcement: 'Bilgide İmece, Başarıda ADAB.',
   subjects: ['Matematik', 'Edebiyat', 'Fizik', 'Tarih', 'Din K.', 'Rehberlik'],
   classes: ['9. Sınıf', '10. Sınıf', '11. Sınıf', '12. Sınıf'],
   questionGoal: 500,
@@ -268,7 +268,11 @@ const defaultSettings = {
     titleColor: '#f7fafc',
     darkMode: false,
     bgPattern: 'defter',
-    bgPatternStrength: 0.14
+    bgPatternStrength: 0.14,
+    announcementFont: "'Playfair Display', Georgia, serif",
+    announcementSize: 15,
+    announcementColor: '#ffffff',
+    announcementWeight: 800
   }
 };
 
@@ -4255,7 +4259,17 @@ const colorForLabel = (label) => {
     </header>
 
     <main class="center-column main-content" role="main">
-      <div v-if="schoolSettings.announcement" class="announcement-box" :style="{background: schoolSettings.styles.accentColor}">📢 {{ schoolSettings.announcement }}</div>
+      <div
+        v-if="schoolSettings.announcement"
+        class="announcement-box"
+        :style="{
+          background: schoolSettings.styles.accentColor,
+          fontFamily: schoolSettings.styles.announcementFont || schoolSettings.styles.titleFont,
+          fontSize: (schoolSettings.styles.announcementSize || 15) + 'px',
+          color: schoolSettings.styles.announcementColor || '#ffffff',
+          fontWeight: schoolSettings.styles.announcementWeight || 800
+        }"
+      >📢 {{ schoolSettings.announcement }}</div>
 
       <div v-if="currentUser && (isLeadershipUser() || isTeacherUser())" class="admin-toolbar glass-premium">
         <button @click="showStats = !showStats; if (showStats) loadCharts()" class="btn-xs" :disabled="teacherIsOffline">📊 İstatistik</button>
@@ -5166,15 +5180,45 @@ const colorForLabel = (label) => {
           <h4>📏 Başlık Ayarları</h4>
           <label>Font:</label>
           <select v-model="schoolSettings.styles.titleFont">
+            <option value="'Manrope', system-ui, sans-serif">Manrope</option>
+            <option value="'Playfair Display', Georgia, serif">Playfair</option>
             <option value="'Inter', sans-serif">Modern</option>
             <option value="'Georgia', serif">Klasik</option>
-            <option value="'Impact', sans-serif">Kalın</option>
             <option value="'Trebuchet MS', sans-serif">Teknik</option>
           </select>
-          <label>Boyut:</label>
+          <label>Boyut: {{ schoolSettings.styles.titleSize }}px</label>
           <input type="range" v-model="schoolSettings.styles.titleSize" min="16" max="40">
           <label>Renk:</label>
           <input type="color" v-model="schoolSettings.styles.titleColor" style="width:100%; height:35px;">
+        </div>
+
+        <div class="s-section" style="border-left: 4px solid #e11d48;">
+          <h4>📢 Duyuru Yazı Tipi</h4>
+          <p class="theme-help">Slogan satırının font, boyut, kalınlık ve rengi.</p>
+          <label>Font:</label>
+          <select v-model="schoolSettings.styles.announcementFont">
+            <option value="'Playfair Display', Georgia, serif">Playfair (slogan)</option>
+            <option value="'Manrope', system-ui, sans-serif">Manrope</option>
+            <option value="'Georgia', serif">Klasik serif</option>
+            <option value="'Inter', sans-serif">Modern</option>
+            <option value="'Trebuchet MS', sans-serif">Teknik</option>
+          </select>
+          <label>Boyut: {{ schoolSettings.styles.announcementSize || 15 }}px</label>
+          <input type="range" v-model.number="schoolSettings.styles.announcementSize" min="12" max="22">
+          <label>Kalınlık: {{ schoolSettings.styles.announcementWeight || 800 }}</label>
+          <input type="range" v-model.number="schoolSettings.styles.announcementWeight" min="500" max="900" step="100">
+          <label>Yazı Rengi:</label>
+          <input type="color" v-model="schoolSettings.styles.announcementColor" style="width:100%; height:35px;">
+          <div
+            class="announcement-font-preview"
+            :style="{
+              background: schoolSettings.styles.accentColor,
+              fontFamily: schoolSettings.styles.announcementFont,
+              fontSize: (schoolSettings.styles.announcementSize || 15) + 'px',
+              color: schoolSettings.styles.announcementColor || '#ffffff',
+              fontWeight: schoolSettings.styles.announcementWeight || 800
+            }"
+          >📢 {{ schoolSettings.announcement || 'Duyuru önizleme' }}</div>
         </div>
 
         <div class="s-section">
@@ -5247,6 +5291,16 @@ const colorForLabel = (label) => {
             <div class="preview-header" :style="{ background: schoolSettings.styles.headerBg, color: schoolSettings.styles.headerText, borderRadius: schoolSettings.styles.cardRadius + 'px ' + schoolSettings.styles.cardRadius + 'px 0 0' }">
               <span :style="{ fontFamily: schoolSettings.styles.titleFont, fontSize: (schoolSettings.styles.titleSize * 0.6) + 'px', color: schoolSettings.styles.titleColor }">DİJİTAL İMECE</span>
             </div>
+            <div
+              class="preview-announcement"
+              :style="{
+                background: schoolSettings.styles.accentColor,
+                fontFamily: schoolSettings.styles.announcementFont,
+                fontSize: Math.max(10, (schoolSettings.styles.announcementSize || 15) * 0.75) + 'px',
+                color: schoolSettings.styles.announcementColor || '#ffffff',
+                fontWeight: schoolSettings.styles.announcementWeight || 800
+              }"
+            >📢 {{ schoolSettings.announcement || 'Duyuru' }}</div>
             <div class="preview-body" :style="{ color: schoolSettings.styles.bodyText, background: schoolSettings.styles.darkMode ? '#1e293b' : '#fff' }">
               <div class="preview-card" :style="{ borderRadius: schoolSettings.styles.cardRadius + 'px', borderLeft: '3px solid ' + schoolSettings.styles.accentColor }">
                 <span style="font-size:0.7rem;">📘 Matematik</span>
@@ -6100,15 +6154,22 @@ const colorForLabel = (label) => {
 }
 
 .announcement-box { 
-  color: white; 
-  padding: 10px; 
+  padding: 10px 12px; 
   border-radius: 12px; 
   margin-bottom: 12px; 
-  font-weight: 800; 
-  font-size: 0.82rem; 
   text-align: center; 
+  letter-spacing: 0.02em;
+  line-height: 1.35;
   box-shadow: 0 10px 20px rgba(2, 6, 23, 0.25);
   animation: floatIn 0.65s ease-out both;
+}
+
+.announcement-font-preview {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  text-align: center;
+  line-height: 1.35;
 }
 
 .search-bar { 
@@ -7652,6 +7713,12 @@ small {
   padding: 8px 12px;
   text-align: center;
   font-weight: 800;
+}
+
+.preview-announcement {
+  padding: 6px 10px;
+  text-align: center;
+  line-height: 1.3;
 }
 
 .preview-body {
