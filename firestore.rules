@@ -1,0 +1,261 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function hasCurrentUserDoc() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function currentUserDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function currentUserData() {
+      return currentUserDoc().data;
+    }
+
+    function isAdmin() {
+      return hasCurrentUserDoc() && currentUserData().role == 'admin';
+    }
+
+    function isTeacher() {
+      return hasCurrentUserDoc() && currentUserData().role == 'teacher';
+    }
+
+    function isManager() {
+      return hasCurrentUserDoc() && currentUserData().role == 'manager';
+    }
+
+    function isLeadership() {
+      return isAdmin() || isManager();
+    }
+
+    function isAdminOrTeacher() {
+      return isLeadership() || isTeacher();
+    }
+
+    function hasAssignedTeacherSubject(subject) {
+      return isTeacher()
+        && currentUserData().keys().hasAny(['subjects'])
+        && subject in currentUserData().subjects;
+    }
+
+    function canModerateSubject(subject) {
+      return isLeadership() || hasAssignedTeacherSubject(subject);
+    }
+
+    function isApprovedActiveUser() {
+      return hasCurrentUserDoc()
+        && currentUserData().isApproved == true
+        && currentUserData().archived != true;
+    }
+
+    function questionLikeDocId(qid) {
+      return qid + '_' + request.auth.uid;
+    }
+
+    function answerThanksDocId(qid) {
+      return qid + '_' + request.auth.uid;
+    }
+
+    function validUserKeys() {
+      return request.resource.data.keys().hasOnly([
+        'name', 'email', 'class', 'number', 'role', 'subjects', 'points', 'isApproved', 'createdAt', 'archived', 'archivedAt'
+      ]);
+    }
+
+    // Settings: public read, staff write
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if isLeadership();
+    }
+
+    // Private notification settings: approved users can read to trigger mail on question create
+    match /private_settings/{docId} {
+      allow read: if isApprovedActiveUser();
+      allow write: if isLeadership();
+    }
+
+    match /moderation_logs/{logId} {
+      allow read: if isLeadership();
+      allow create: if isAdminOrTeacher();
+    }
+
+    match /user_notifications/{notificationId} {
+      allow read: if isLeadership()
+        || (isSignedIn() && resource.data.recipientId == request.auth.uid);
+      allow create: if isAdminOrTeacher()
+        && request.resource.data.keys().hasOnly([
+          'actorId', 'actorName', 'actorRole', 'recipientId', 'type', 'title',
+          'message', 'relatedId', 'reason', 'read', 'createdAt'
+        ])
+        && request.resource.data.recipientId is string
+        && request.resource.data.recipientId.size() > 0
+        && request.resource.data.type is string
+        && request.resource.data.title is string
+        && request.resource.data.message is string
+        && request.resource.data.read == false;
+      allow update: if isSignedIn()
+        && resource.data.recipientId == request.auth.uid
+        && request.resource.data.diff(resource.data).changedKeys().hasOnly(['read'])
+        && request.resource.data.read == true;
+    }
+
+    match /question_likes/{likeId} {
+      allow read: if isAdminOrTeacher() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isApprovedActiveUser()
+        && !exists(/databases/$(database)/documents/question_likes/$(likeId))
+        && request.resource.data.userId == request.auth.uid
+        && likeId == questionLikeDocId(request.resource.data.questionId)
+        && request.resource.data.keys().hasOnly(['questionId', 'userId', 'createdAt']);
+    }
+
+    match /answer_thanks/{thanksId} {
+      allow read: if isAdminOrTeacher() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isApprovedActiveUser()
+        && !exists(/databases/$(database)/documents/answer_thanks/$(thanksId))
+        && request.resource.data.userId == request.auth.uid
+        && thanksId == answerThanksDocId(request.resource.data.questionId)
+        && request.resource.data.keys().hasOnly(['questionId', 'userId', 'createdAt']);
+    }
+
+    // Questions
+    match /questions/{qid} {
+      allow read: if resource.data.isApproved == true
+        || isAdminOrTeacher()
+        || (isSignedIn() && (
+          resource.data.senderId == request.auth.uid
+          || resource.data.respId == request.auth.uid
+        ));
+      allow create: if isApprovedActiveUser()
+        && request.resource.data.senderId == request.auth.uid
+        && request.resource.data.sender == currentUserData().name
+        && request.resource.data.senderRole == currentUserData().role
+        && request.resource.data.isApproved == false
+        && request.resource.data.isRejected == false
+        && request.resource.data.moderationStatus == 'pending'
+        && request.resource.data.likes == 0
+        && request.resource.data.keys().hasOnly([
+          'sender', 'senderClass', 'senderId', 'senderRole', 'subject', 'classLevel', 'content', 'isApproved', 'isRejected', 'moderationStatus', 'likes', 'created_at'
+        ]);
+      allow update: if canModerateSubject(resource.data.subject)
+        || (
+          isApprovedActiveUser()
+          && resource.data.senderId == request.auth.uid
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+            'content', 'isRejected', 'moderationStatus', 'rejectionReason', 'rejectedAt', 'rejectedById', 'rejectedByName', 'rejectedByRole'
+          ])
+          && request.resource.data.content is string
+          && request.resource.data.content.size() >= 5
+          && request.resource.data.isApproved == resource.data.isApproved
+          && (
+            !request.resource.data.diff(resource.data).changedKeys().hasAny(['isRejected', 'moderationStatus', 'rejectionReason', 'rejectedAt', 'rejectedById', 'rejectedByName', 'rejectedByRole'])
+            || (
+              resource.data.isRejected == true
+              && request.resource.data.isRejected == false
+              && request.resource.data.moderationStatus == 'pending'
+              && request.resource.data.rejectionReason == null
+              && request.resource.data.rejectedAt == null
+              && request.resource.data.rejectedById == null
+              && request.resource.data.rejectedByName == null
+              && request.resource.data.rejectedByRole == null
+            )
+          )
+        )
+        || (
+          isApprovedActiveUser()
+          && resource.data.isApproved == true
+          && (resource.data.respId == null || resource.data.respId == request.auth.uid)
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly([
+            'cevap', 'respondent', 'respId', 'respRole', 'answerApproved', 'answerModerationStatus'
+          ])
+          && request.resource.data.cevap is string
+          && request.resource.data.cevap.size() >= 10
+          && request.resource.data.respondent is string
+          && request.resource.data.respId == request.auth.uid
+          && request.resource.data.answerApproved == false
+          && request.resource.data.answerModerationStatus == 'pending'
+          && request.resource.data.respRole in ['student', 'teacher', 'manager', 'admin']
+        )
+        || (
+          isApprovedActiveUser()
+          && resource.data.senderId == request.auth.uid
+          && resource.data.answerApproved == true
+          && resource.data.answerAccepted != true
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['answerAccepted', 'acceptedAt'])
+          && request.resource.data.answerAccepted == true
+        )
+        || (
+          isApprovedActiveUser()
+          && resource.data.isApproved == true
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['likes'])
+          && request.resource.data.likes == resource.data.likes + 1
+          && existsAfter(/databases/$(database)/documents/question_likes/$(questionLikeDocId(qid)))
+        )
+        || (
+          isApprovedActiveUser()
+          && resource.data.answerApproved == true
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['answerThanks'])
+          && request.resource.data.answerThanks
+            == ((resource.data.answerThanks is int ? resource.data.answerThanks : 0) + 1)
+          && existsAfter(/databases/$(database)/documents/answer_thanks/$(answerThanksDocId(qid)))
+        );
+      allow delete: if canModerateSubject(resource.data.subject);
+    }
+
+    // Users
+    match /users/{uid} {
+      // Public: approved students only (leaderboard)
+      allow read: if (resource.data.role == 'student' && resource.data.isApproved == true)
+        || isLeadership()
+        || isOwner(uid);
+
+      // Create own user doc (no self-approval / role escalation), or staff-managed user doc
+      allow create: if !exists(/databases/$(database)/documents/users/$(uid))
+        && validUserKeys()
+        && request.resource.data.points == 0
+        && (
+          (
+            isOwner(uid)
+            && request.resource.data.role in ['student', 'teacher']
+            && request.resource.data.isApproved == false
+            && request.resource.data.archived == false
+          )
+          || (
+            isLeadership()
+            && request.resource.data.role in ['student', 'teacher', 'manager']
+            && (isAdmin() || request.resource.data.role != 'admin')
+            && request.resource.data.archived == false
+          )
+        );
+
+      // Update: staff can edit; users can edit own profile but not role/approval
+      allow update: if isAdmin()
+        || (
+          isManager()
+          && resource.data.role != 'admin'
+          && request.resource.data.role != 'admin'
+        )
+        || (isOwner(uid)
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['name', 'class', 'number'])
+          && request.resource.data.role == resource.data.role
+          && request.resource.data.email == resource.data.email
+          && request.resource.data.points == resource.data.points
+          && request.resource.data.isApproved == resource.data.isApproved
+          && request.resource.data.archived == resource.data.archived
+          && request.resource.data.archivedAt == resource.data.archivedAt
+          && request.resource.data.createdAt == resource.data.createdAt);
+
+      allow delete: if isAdmin()
+        || (isManager() && resource.data.role != 'admin');
+    }
+  }
+}

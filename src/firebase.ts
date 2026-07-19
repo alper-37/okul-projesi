@@ -1,6 +1,12 @@
 import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider } from "firebase/auth";
-import { initializeFirestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
+import {
+  CACHE_SIZE_UNLIMITED,
+  initializeFirestore,
+  memoryLocalCache,
+  persistentLocalCache,
+  persistentMultipleTabManager
+} from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -21,11 +27,19 @@ if (missing.length) {
 
 // Firebase'i başlat
 const app = initializeApp(firebaseConfig);
+const adminApp = initializeApp(firebaseConfig, "adminApp");
 
 // Dışa aktar
 export const auth = getAuth(app);
-export const googleProvider = new GoogleAuthProvider();
+export const adminAuth = getAuth(adminApp);
 export const db = initializeFirestore(app, {
+  // Enable persistent IndexedDB cache for true offline reads after first sync.
+  localCache: typeof window !== "undefined" && "indexedDB" in window
+    ? persistentLocalCache({
+        cacheSizeBytes: 100 * 1024 * 1024, // 100 MB limit
+        tabManager: persistentMultipleTabManager()
+      })
+    : memoryLocalCache(),
   // Work around WebChannel connection issues on some networks/extensions.
   experimentalForceLongPolling: true,
   useFetchStreams: false
