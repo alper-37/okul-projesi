@@ -15,6 +15,17 @@ import {
   suggestionsForSubject,
   topicTrendSplit,
 } from './composables/pedagogy';
+import {
+  DEFAULT_ANSWER_TEMPLATES,
+  SEASONAL_THEME_KEYS,
+  aggregateSubjectWorkload,
+  clearQuestionDraft,
+  deriveAchievementBadges,
+  getPointBadge,
+  isAnnouncementActive,
+  readQuestionDraft,
+  writeQuestionDraft,
+} from './composables/featureSuite';
 
 // Chart.js: lazy load only when stats panel opens
 const chartReady = shallowRef(false);
@@ -157,7 +168,9 @@ const similarQuestions = ref([]);
 const filterSubject = ref('');
 const filterClass = ref('');
 const filterApproval = ref('all'); // all, approved, pending
-const filterDate = ref('all'); // all, 7d, 30d, 90d
+const filterAnswer = ref('all'); // all, unanswered, answered
+const filterDate = ref('all');
+const approvalFocusIndex = ref(0);
 const statsRange = ref('30d');
 const dashSubject = ref('');
 const dashClass = ref('');
@@ -247,6 +260,11 @@ const defaultSettings = {
   name: 'Taşköprü Anadolu İmam Hatip Lisesi',
   logo: 'https://img.icons8.com/color/96/graduation-cap.png',
   announcement: 'Bilgide İmece, Başarıda ADAB.',
+  announcementStart: '',
+  announcementEnd: '',
+  featuredQuestionId: '',
+  featuredLabel: 'Haftanın Sorusu',
+  answerTemplates: JSON.parse(JSON.stringify(DEFAULT_ANSWER_TEMPLATES)),
   subjects: ['Matematik', 'Edebiyat', 'Fizik', 'Tarih', 'Din K.', 'Rehberlik'],
   classes: ['9. Sınıf', '10. Sınıf', '11. Sınıf', '12. Sınıf'],
   questionGoal: 500,
@@ -378,8 +396,45 @@ const themePresets = {
     fontFamily: "'Manrope', system-ui, sans-serif",
     titleFont: "'Manrope', system-ui, sans-serif", titleSize: 24,
     bgPattern: 'tahta', bgPatternStrength: 0.2
+  },
+  bahar: {
+    label: 'Bahar Dönemi',
+    blurb: 'Açık yeşil ve sıcak vurgu; dönem başı',
+    headerBg: '#1e3d32', headerText: '#eef8f2', accentColor: '#3d9a6a',
+    footerText: '#cfe8a8', footerBg: '#173329', bodyText: '#1f2f28',
+    bgColor: '#e7f2ea', titleColor: '#f4fff8', cardRadius: 16, darkMode: false,
+    fontFamily: "'Manrope', system-ui, sans-serif",
+    titleFont: "'Playfair Display', Georgia, serif", titleSize: 26,
+    bgPattern: 'kampus', bgPatternStrength: 0.12
+  },
+  kis: {
+    label: 'Kış Sessizliği',
+    blurb: 'Buz mavisi odak; uzun çalışma',
+    headerBg: '#1a2a3a', headerText: '#e8f1f8', accentColor: '#4a90a4',
+    footerText: '#b8d4e3', footerBg: '#142230', bodyText: '#1e293b',
+    bgColor: '#0f1a24', titleColor: '#f1f7fc', cardRadius: 14, darkMode: false,
+    fontFamily: "'Manrope', system-ui, sans-serif",
+    titleFont: "'Manrope', system-ui, sans-serif", titleSize: 24,
+    bgPattern: 'yildiz', bgPatternStrength: 0.15
+  },
+  sinav: {
+    label: 'Sınav Haftası',
+    blurb: 'Yüksek odak; net kontrast',
+    headerBg: '#2a1f14', headerText: '#fff7ed', accentColor: '#c2711a',
+    footerText: '#f5d0a0', footerBg: '#1f160e', bodyText: '#292018',
+    bgColor: '#1a1410', titleColor: '#fffaf3', cardRadius: 12, darkMode: false,
+    fontFamily: "'Manrope', system-ui, sans-serif",
+    titleFont: "'Playfair Display', Georgia, serif", titleSize: 26,
+    bgPattern: 'kareli', bgPatternStrength: 0.16
   }
 };
+
+const coreThemeEntries = Object.fromEntries(
+  Object.entries(themePresets).filter(([key]) => !(SEASONAL_THEME_KEYS).includes(key))
+);
+const seasonalThemeEntries = Object.fromEntries(
+  Object.entries(themePresets).filter(([key]) => (SEASONAL_THEME_KEYS).includes(key))
+);
 
 const themePresetNames = Object.fromEntries(
   Object.entries(themePresets).map(([key, preset]) => [key, preset.label])
@@ -447,7 +502,18 @@ const mergeSettingsWithDefaults = (data = {}) => ({
   styles: {
     ...defaultSettings.styles,
     ...(data.styles || {})
-  }
+  },
+  answerTemplates: Array.isArray(data.answerTemplates) && data.answerTemplates.length
+    ? data.answerTemplates.map((t, i) => ({
+        id: String(t?.id || `t-${i}`),
+        label: String(t?.label || `Şablon ${i + 1}`).slice(0, 40),
+        body: String(t?.body || '').slice(0, 2000)
+      }))
+    : JSON.parse(JSON.stringify(DEFAULT_ANSWER_TEMPLATES)),
+  featuredQuestionId: String(data.featuredQuestionId ?? defaultSettings.featuredQuestionId ?? ''),
+  featuredLabel: String(data.featuredLabel ?? defaultSettings.featuredLabel ?? 'Haftanın Sorusu').slice(0, 60),
+  announcementStart: String(data.announcementStart ?? ''),
+  announcementEnd: String(data.announcementEnd ?? '')
 });
 
 const sanitizeFontUrl = (url) => {
@@ -1259,14 +1325,117 @@ watch(() => newQuestion.value.content, (newVal) => {
   similarQuestionFound.value = matches.length ? matches[0] : null;
 });
 
-// --- 🤖 YAPAY ZEKA: ROZET SİSTEMİ ---
-const getUserBadge = (points) => {
-  if (points > 200) return '👑 Dahi';
-  if (points > 100) return '🏆 Üstad';
-  if (points > 50) return '⭐ Kıdemli';
-  if (points > 20) return '💡 Gayretli';
-  if (points > 5) return '🌱 Filiz';
-  return '🆕 Yeni';
+let draftSaveTimer = null;
+watch(newQuestion, (val) => {
+  if (draftSaveTimer) clearTimeout(draftSaveTimer);
+  draftSaveTimer = setTimeout(() => {
+    writeQuestionDraft({
+      subject: val.subject,
+      classLevel: val.classLevel,
+      content: val.content,
+      topicTag: val.topicTag || topicTagCustom.value
+    });
+  }, 400);
+}, { deep: true });
+
+watch(showAskModal, (open) => {
+  if (!open) return;
+  const draft = readQuestionDraft();
+  if (!draft) return;
+  if (!newQuestion.value.content && !newQuestion.value.subject) {
+    newQuestion.value = {
+      subject: draft.subject,
+      classLevel: draft.classLevel,
+      content: draft.content,
+      topicTag: draft.topicTag
+    };
+    topicTagCustom.value = draft.topicTag || '';
+    if (draft.content || draft.subject) {
+      toast.info(isBrowserOnline.value ? 'Kaydedilmiş taslak yüklendi.' : 'Çevrimdışı taslak yüklendi.');
+    }
+  }
+});
+
+// --- 🤖 ROZET SİSTEMİ ---
+const getUserBadge = (points) => getPointBadge(Number(points) || 0);
+
+const userContributionMaps = computed(() => {
+  const asked = new Map();
+  const accepted = new Map();
+  const recent = new Map();
+  const since = Date.now() - 14 * 86400000;
+  questions.value.forEach((q) => {
+    if (q.senderId) asked.set(q.senderId, (asked.get(q.senderId) || 0) + 1);
+    if (q.respId && q.answerAccepted) accepted.set(q.respId, (accepted.get(q.respId) || 0) + 1);
+    const ts = q.created_at?.toDate ? q.created_at.toDate().getTime() : 0;
+    if (ts >= since) {
+      if (q.senderId) recent.set(q.senderId, (recent.get(q.senderId) || 0) + 1);
+      if (q.respId && q.cevap) recent.set(q.respId, (recent.get(q.respId) || 0) + 1);
+    }
+  });
+  return { asked, accepted, recent };
+});
+
+const getUserAchievementBadges = (userId, points = 0) => {
+  const maps = userContributionMaps.value;
+  return deriveAchievementBadges({
+    points,
+    questionsAsked: maps.asked.get(userId) || 0,
+    answersAccepted: maps.accepted.get(userId) || 0,
+    contributionsLast14Days: maps.recent.get(userId) || 0,
+  });
+};
+
+const currentUserBadges = computed(() => {
+  if (!currentUser.value?.id) return [];
+  return [
+    getUserBadge(currentUser.value.points || 0),
+    ...getUserAchievementBadges(currentUser.value.id, currentUser.value.points || 0),
+  ];
+});
+
+const showAnnouncementBanner = computed(() => isAnnouncementActive(schoolSettings.value));
+
+const featuredQuestion = computed(() => {
+  const id = String(schoolSettings.value.featuredQuestionId || '').trim();
+  if (!id) return null;
+  return questions.value.find((q) => q.id === id && userCanSeeQuestion(q)) || null;
+});
+
+const approvedQuestionOptions = computed(() =>
+  questions.value
+    .filter((q) => q.isApproved && !q.isRejected)
+    .slice(0, 80)
+    .map((q) => ({
+      id: q.id,
+      label: `${q.subject || 'Ders'} — ${(q.content || '').slice(0, 60)}`,
+    }))
+);
+
+const setFeaturedQuestion = async (questionId) => {
+  if (!canEditCriticalSettings()) {
+    toast.warning('Bu işlem için yönetici yetkisi gerekir.');
+    return;
+  }
+  schoolSettings.value.featuredQuestionId = questionId || '';
+  if (!schoolSettings.value.featuredLabel) {
+    schoolSettings.value.featuredLabel = 'Haftanın Sorusu';
+  }
+  try {
+    await setDoc(doc(db, 'settings', 'school_info'), {
+      featuredQuestionId: schoolSettings.value.featuredQuestionId,
+      featuredLabel: schoolSettings.value.featuredLabel
+    }, { merge: true });
+    toast.success(questionId ? 'Haftanın sorusu güncellendi.' : 'Haftanın sorusu kaldırıldı.');
+  } catch (error) {
+    toast.error(functionErrorMessage(error, 'Haftanın sorusu kaydedilemedi.'));
+  }
+};
+
+const applyAnswerTemplate = (questionId, template) => {
+  if (!template?.body) return;
+  answerText.value[questionId] = String(template.body);
+  toast.info(`"${template.label}" şablonu yapıştırıldı.`);
 };
 
 const topicSuggestions = computed(() => suggestionsForSubject(newQuestion.value.subject));
@@ -1482,6 +1651,12 @@ const filteredQuestions = computed(() => {
   if (filterApproval.value === 'approved') list = list.filter(q => q.isApproved);
   if (filterApproval.value === 'pending') list = list.filter(q => !q.isApproved && !q.isRejected);
   if (filterApproval.value === 'rejected') list = list.filter(q => q.isRejected);
+  if (filterAnswer.value === 'unanswered') {
+    list = list.filter(q => q.isApproved && !(q.cevap && String(q.cevap).trim()));
+  }
+  if (filterAnswer.value === 'answered') {
+    list = list.filter(q => q.cevap && String(q.cevap).trim());
+  }
   if (filterDate.value !== 'all') {
     const now = Date.now();
     const days = filterDate.value === '7d' ? 7 : filterDate.value === '30d' ? 30 : 90;
@@ -2611,6 +2786,7 @@ const handleCreateQuestion = async () => {
     topicTagCustom.value = '';
     similarQuestionFound.value = null;
     similarQuestions.value = [];
+    clearQuestionDraft();
   } catch (error) {
     toast.error("Soru gönderilemedi: " + (error.message || error));
   }
@@ -2944,6 +3120,15 @@ const exportStatsPDF = () => {
     renderTable('🌟 Öğrenci Aktivite Skoru', ['#', 'Öğrenci', 'Sınıf', 'Soru', 'Beğeni', 'Skor'],
       studentActivity.value.map((s, i) => [i + 1, s.name, s.cls, s.questions, s.likes, s.score]));
   }
+
+  if (ws.topics?.length) {
+    renderTable('🏷️ Bu Haftanın Konuları', ['#', 'Ders', 'Konu', 'Adet', 'Cevapsız'],
+      ws.topics.map((t, i) => [i + 1, t.subject, t.topic, t.count, t.unanswered]));
+  }
+  if (ws.workload?.length) {
+    renderTable('👨‍🏫 Bu Hafta İş Yükü', ['Ders', 'Cevapsız', 'Bekleyen', 'Toplam'],
+      ws.workload.map((row) => [row.subject, row.unanswered, row.pending, row.total]));
+  }
   
   html += `<hr><p style="text-align:center;color:#94a3b8;font-size:0.8rem">Bu rapor ${name} ADAB sistemi tarafından otomatik oluşturulmuştur.</p></body></html>`;
   
@@ -2954,6 +3139,42 @@ const exportStatsPDF = () => {
     setTimeout(() => w.print(), 500);
   }
   toast.success('PDF raporu hazırlandı — yazdır diyalogu açılacak.');
+};
+
+const exportHeatmapPDF = () => {
+  if (!isLeadershipUser()) {
+    toast.warning('Bu işlem için yönetici yetkisi gerekir.');
+    return;
+  }
+  const accent = schoolSettings.value?.styles?.accentColor || '#16a085';
+  const date = new Date().toLocaleDateString('tr-TR');
+  const name = schoolSettings.value?.name || 'ADAB';
+  const hm = heatmapData.value;
+  let html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>ADAB Isı Haritası - ${date}</title>
+  <style>body{font-family:system-ui,sans-serif;padding:28px;color:#1e293b;max-width:960px;margin:0 auto}
+  h1{color:${accent};border-bottom:3px solid ${accent};padding-bottom:8px}
+  .note{background:#fff7ed;border:1px solid #fdba74;padding:10px 12px;border-radius:8px;margin:12px 0;font-size:0.9rem}
+  table{width:100%;border-collapse:collapse;font-size:0.72rem}
+  th,td{border:1px solid #e2e8f0;padding:4px;text-align:center}
+  th{background:${accent};color:#fff}
+  td.day{text-align:left;font-weight:700;background:#f8fafc}
+  @media print{body{padding:8px}}</style></head><body>`;
+  html += `<h1>🔥 Aktivite Isı Haritası</h1><p>${name} · ${date}</p>`;
+  html += `<div class="note"><b>Yalnızca idare içindir.</b> Sınıf/öğrenci kimliği içermez; gün × saat soru yoğunluğudur. Velilere veya öğrencilere dağıtılmamalıdır.</div>`;
+  const grid = hm?.grid || [];
+  const hours = grid[0]?.length || 24;
+  html += `<table><thead><tr><th>Gün</th>${Array.from({ length: hours }, (_, hour) => `<th>${hour}</th>`).join('')}</tr></thead><tbody>`;
+  grid.forEach((row, dayIdx) => {
+    html += `<tr><td class="day">${hm.dayNames[dayIdx] || dayIdx}</td>${row.map((val) => `<td>${val || ''}</td>`).join('')}</tr>`;
+  });
+  html += `</tbody></table><hr><p style="text-align:center;color:#94a3b8;font-size:0.8rem">ADAB idare raporu</p></body></html>`;
+  const w = window.open('', '_blank');
+  if (w) {
+    w.document.write(html);
+    w.document.close();
+    setTimeout(() => w.print(), 500);
+  }
+  toast.success('Isı haritası PDF hazır — yazdır diyalogu açılacak.');
 };
 
 let unsubscribeQuestions = null;
@@ -3313,7 +3534,22 @@ const startTeacherNotificationSettingsListener = () => {
 
 // --- UYGULAMA BAŞLATMA (GÜNCELLENMİŞ HALİ) ---
 
-// Escape key handler for modals
+// Escape + hızlı onay klavyesi
+const isTypingTarget = (el) => {
+  if (!el || !(el instanceof HTMLElement)) return false;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+};
+
+const anyModalOpen = () => (
+  showAuthModal.value ||
+  showSettingsModal.value ||
+  showTeacherSettingsModal.value ||
+  showDesignModal.value ||
+  showAskModal.value ||
+  showPasswordModal.value
+);
+
 const handleEscKey = (e) => {
   if (e.key === 'Escape') {
     if (showAuthModal.value) { showAuthModal.value = false; return; }
@@ -3322,6 +3558,38 @@ const handleEscKey = (e) => {
     if (showDesignModal.value) { showDesignModal.value = false; return; }
     if (showAskModal.value) { showAskModal.value = false; return; }
     if (showPasswordModal.value) { showPasswordModal.value = false; return; }
+  }
+
+  if (anyModalOpen() || isTypingTarget(e.target)) return;
+  const queue = relevantPendingQuestions.value;
+  if (!queue.length) return;
+  if (approvalFocusIndex.value >= queue.length) approvalFocusIndex.value = 0;
+  const focused = queue[approvalFocusIndex.value];
+  const key = String(e.key || '').toLowerCase();
+  if (key === 'j') {
+    approvalFocusIndex.value = Math.min(queue.length - 1, approvalFocusIndex.value + 1);
+    e.preventDefault();
+    return;
+  }
+  if (key === 'k') {
+    approvalFocusIndex.value = Math.max(0, approvalFocusIndex.value - 1);
+    e.preventDefault();
+    return;
+  }
+  if (!focused || !canModerateQuestion(focused)) return;
+  if (key === 'a') {
+    e.preventDefault();
+    void onayIslem(focused, 'soru');
+    return;
+  }
+  if (key === 'r') {
+    e.preventDefault();
+    void onayIslem(focused, 'sil');
+    return;
+  }
+  if (key === 'c' && focused.cevap && !focused.answerApproved) {
+    e.preventDefault();
+    void onayIslem(focused, 'cevap');
   }
 };
 
@@ -3836,9 +4104,15 @@ const weeklySummary = computed(() => {
   return {
     questions: { current: thisWeek.length, previous: lastWeek.length },
     answered: { current: thisAnswered, previous: lastAnswered },
-    approved: { current: thisApproved, previous: lastApproved }
+    approved: { current: thisApproved, previous: lastApproved },
+    topics: aggregateFrequentTopics(thisWeek, 8),
+    workload: aggregateSubjectWorkload(thisWeek)
   };
 });
+
+const teacherWorkload = computed(() => aggregateSubjectWorkload(
+  questions.value.filter((q) => userCanSeeQuestion(q))
+));
 
 // --- 11) RADAR CHART (ders dağılımı) ---
 const radarData = computed(() => {
@@ -3925,6 +4199,7 @@ const contributionLeaders = computed(() => {
         points: s.points || 0,
         index,
         badge: getUserBadge(s.points || 0),
+        achievements: getUserAchievementBadges(s.id, s.points || 0),
       };
     })
     .filter((s) => s.index > 0)
@@ -4251,6 +4526,7 @@ const colorForLabel = (label) => {
           <div v-else class="user-pill">
             <span>{{ currentUser.name }}</span>
             <span class="role-badge" :title="getRoleLabel(currentUser.role)">{{ getRoleBadgeIcon(currentUser.role) }}</span>
+            <span v-if="currentUserBadges.length" class="user-badge-chip" :title="currentUserBadges.join(' · ')">{{ currentUserBadges[0] }}</span>
             <button @click="handleLogout" class="logout-btn" aria-label="Çıkış yap">🔓</button>
           </div>
           <div class="time-chip">🕒 {{ nowText }}</div>
@@ -4260,7 +4536,7 @@ const colorForLabel = (label) => {
 
     <main class="center-column main-content" role="main">
       <div
-        v-if="schoolSettings.announcement"
+        v-if="showAnnouncementBanner"
         class="announcement-box"
         :style="{
           background: schoolSettings.styles.accentColor,
@@ -4270,6 +4546,15 @@ const colorForLabel = (label) => {
           fontWeight: schoolSettings.styles.announcementWeight || 800
         }"
       >📢 {{ schoolSettings.announcement }}</div>
+
+      <div v-if="featuredQuestion" class="featured-question glass-premium">
+        <div class="featured-head">
+          <b>{{ schoolSettings.featuredLabel || 'Haftanın Sorusu' }}</b>
+          <span class="badge-topic">{{ featuredQuestion.subject }}</span>
+        </div>
+        <p>{{ featuredQuestion.content }}</p>
+        <small>{{ featuredQuestion.sender }} · {{ featuredQuestion.classLevel || 'Genel' }}</small>
+      </div>
 
       <div v-if="currentUser && (isLeadershipUser() || isTeacherUser())" class="admin-toolbar glass-premium">
         <button @click="showStats = !showStats; if (showStats) loadCharts()" class="btn-xs" :disabled="teacherIsOffline">📊 İstatistik</button>
@@ -4300,6 +4585,7 @@ const colorForLabel = (label) => {
             <button v-if="isLeadershipUser()" @click="downloadNotebook" class="btn-xs">🤖 AI</button>
             <button v-if="isLeadershipUser()" @click="exportStatsCSV" class="btn-xs">📊 CSV</button>
             <button v-if="isLeadershipUser()" @click="exportStatsPDF" class="btn-xs">📄 PDF</button>
+            <button v-if="isLeadershipUser()" @click="exportHeatmapPDF" class="btn-xs">🔥 Isı PDF</button>
           </div>
         </div>
 
@@ -4340,6 +4626,28 @@ const colorForLabel = (label) => {
                 {{ weeklySummary.approved.current >= weeklySummary.approved.previous ? '▲' : '▼' }} Önceki: {{ weeklySummary.approved.previous }}
               </div>
             </div>
+          </div>
+
+          <div v-if="weeklySummary.topics?.length" class="workload-block" style="margin-top:10px;">
+            <h4 style="margin:0 0 6px;">🏷️ Bu Haftanın Konuları</h4>
+            <div class="tag-list">
+              <span v-for="t in weeklySummary.topics.slice(0, 6)" :key="t.subject + t.topic" class="tag-item">
+                {{ t.topic }} <small>({{ t.count }})</small>
+              </span>
+            </div>
+          </div>
+          <div v-if="weeklySummary.workload?.length" class="workload-block" style="margin-top:10px;">
+            <h4 style="margin:0 0 6px;">👨‍🏫 İş Yükü (7 gün)</h4>
+            <table class="stats-table compact">
+              <thead><tr><th>Ders</th><th>Cevapsız</th><th>Bekleyen</th></tr></thead>
+              <tbody>
+                <tr v-for="w in weeklySummary.workload.slice(0, 8)" :key="'ww-' + w.subject">
+                  <td>{{ w.subject }}</td>
+                  <td>{{ w.unanswered }}</td>
+                  <td>{{ w.pending }}</td>
+                </tr>
+              </tbody>
+            </table>
           </div>
 
           <!-- DÖNEM KARŞILAŞTIRMA -->
@@ -4707,7 +5015,7 @@ const colorForLabel = (label) => {
                 <tr v-for="(s, idx) in contributionLeaders.slice(0, 10)" :key="'c'+s.id">
                   <td>{{ idx + 1 }}</td>
                   <td>{{ s.name }}</td>
-                  <td>{{ s.badge }}</td>
+                  <td>{{ s.badge }} <small v-if="s.achievements?.length">· {{ s.achievements[0] }}</small></td>
                   <td><b>{{ s.index }}</b></td>
                 </tr>
               </tbody>
@@ -4740,6 +5048,20 @@ const colorForLabel = (label) => {
             </table>
           </div>
           <div v-else style="text-align:center;padding:20px;color:#94a3b8;">Henüz öğretmen verisi yok.</div>
+          <div class="stats-list" style="margin-top:12px;" v-if="teacherWorkload.length">
+            <b>📋 Ders Bazlı İş Yükü</b>
+            <table class="stats-table" style="margin-top:8px;">
+              <thead><tr><th>Ders</th><th>Cevapsız</th><th>Onay Bekleyen</th><th>Toplam</th></tr></thead>
+              <tbody>
+                <tr v-for="w in teacherWorkload" :key="'tw-' + w.subject">
+                  <td>{{ w.subject }}</td>
+                  <td>{{ w.unanswered }}</td>
+                  <td>{{ w.pending }}</td>
+                  <td>{{ w.total }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
           <div class="stats-list" style="margin-top:12px;" v-if="frequentTopics.length">
             <b>🎯 Öğretmen Odak: Sık / Cevapsız Konular</b>
             <table class="stats-table" style="margin-top:8px;">
@@ -4846,6 +5168,11 @@ const colorForLabel = (label) => {
           <option value="pending">Onaysız</option>
           <option value="rejected">Reddedilen</option>
         </select>
+        <select v-model="filterAnswer">
+          <option value="all">Cevap: Tümü</option>
+          <option value="unanswered">Henüz cevaplanmayan</option>
+          <option value="answered">Cevaplanmış</option>
+        </select>
         <select v-model="filterDate">
           <option value="all">Tüm Tarihler</option>
           <option value="7d">Son 7 gün</option>
@@ -4891,8 +5218,14 @@ const colorForLabel = (label) => {
       <div v-else-if="(isLeadershipUser() || (isTeacherUser() && !teacherIsOffline)) && relevantPendingQuestions.length" class="notif-box glass-premium">
         <div class="notif-header">
           <b>Onay Bekleyen Ders Soruları</b>
+          <small class="kbd-hint">A onay · R red · C cevap onayı · J/K gez</small>
         </div>
-        <div v-for="q in relevantPendingQuestions.slice(0, 5)" :key="q.id">• {{ q.subject }}: "{{ (q.content || '').slice(0, 70) }}..."</div>
+        <div
+          v-for="(q, idx) in relevantPendingQuestions.slice(0, 5)"
+          :key="q.id"
+          class="approval-queue-item"
+          :class="{ focused: idx === approvalFocusIndex }"
+        >• {{ q.subject }}: "{{ (q.content || '').slice(0, 70) }}..."</div>
       </div>
 
       <div class="search-bar"><label class="sr-only" for="main-search">Soru ara</label><input id="main-search" v-model="searchQuery" placeholder="🔍 Konu, öğrenci veya sınıf ara..." class="search-input"></div>
@@ -4914,6 +5247,7 @@ const colorForLabel = (label) => {
               <span class="badge" :style="{ backgroundColor: q.isApproved ? schoolSettings.styles.accentColor : q.isRejected ? '#dc2626' : '#f59e0b' }">{{ q.subject }}</span>
               <span v-if="q.classLevel" class="badge-class">{{ q.classLevel }}</span>
               <span v-if="q.topicTag" class="badge-topic">🏷️ {{ q.topicTag }}</span>
+              <span v-if="schoolSettings.featuredQuestionId === q.id" class="badge-featured">📌 {{ schoolSettings.featuredLabel || 'Haftanın Sorusu' }}</span>
               <span v-if="q.answerAccepted" class="badge-status ok">✅ Çözüldü</span>
               <span v-else-if="q.cevap && q.answerApproved" class="badge-status wait">💬 Cevaplı</span>
               <span v-else-if="!q.isApproved && !q.isRejected" class="badge-status pending">⏳ Onay</span>
@@ -4948,6 +5282,18 @@ const colorForLabel = (label) => {
           <div v-if="canModerateQuestion(q) && !q.isApproved" class="actions-compact">
             <button @click="onayIslem(q, 'soru')" class="btn-tiny ok">✔ Onayla</button>
             <button @click="onayIslem(q, 'sil')" class="btn-tiny no">✖ Reddet</button>
+          </div>
+          <div v-if="isLeadershipUser() && q.isApproved" class="actions-compact">
+            <button
+              v-if="schoolSettings.featuredQuestionId !== q.id"
+              @click="setFeaturedQuestion(q.id)"
+              class="btn-tiny send"
+            >📌 Öne çıkar</button>
+            <button
+              v-else
+              @click="setFeaturedQuestion('')"
+              class="btn-tiny no"
+            >📌 Kaldır</button>
           </div>
           <div v-if="currentUser && (currentUser.id === q.senderId || isLeadershipUser() || canModerateQuestion(q))" class="actions-compact">
             <button @click="startEditQuestion(q)" class="btn-tiny send">✏️ Düzenle</button>
@@ -4986,9 +5332,20 @@ const colorForLabel = (label) => {
             </div>
           </div>
 
-          <div v-if="currentUser && q.isApproved && !q.cevap" class="reply-compact">
-            <input v-model="answerText[q.id]" placeholder="Yanıt..." class="input-tiny">
-            <button @click="handleSendAnswer(q)" class="btn-tiny send" :style="{background:schoolSettings.styles.accentColor}">➤</button>
+          <div v-if="currentUser && q.isApproved && !q.cevap" class="reply-compact-wrap">
+            <div v-if="(schoolSettings.answerTemplates || []).length" class="template-chips">
+              <button
+                v-for="tpl in schoolSettings.answerTemplates"
+                :key="tpl.id"
+                type="button"
+                class="tpl-chip"
+                @click="applyAnswerTemplate(q.id, tpl)"
+              >{{ tpl.label }}</button>
+            </div>
+            <div class="reply-compact">
+              <input v-model="answerText[q.id]" placeholder="Yanıt..." class="input-tiny">
+              <button @click="handleSendAnswer(q)" class="btn-tiny send" :style="{background:schoolSettings.styles.accentColor}">➤</button>
+            </div>
           </div>
         </div>
       </div>
@@ -5009,7 +5366,7 @@ const colorForLabel = (label) => {
              <span v-else-if="index === 1">🥈</span>
              <span v-else-if="index === 2">🥉</span>
              <span v-else>{{ index + 1 }}.</span>
-             {{ s.name }} ({{ getUserBadge(s.points) }} - {{ s.points || 0 }}P) | 
+             {{ s.name }} ({{ getUserBadge(s.points) }}{{ getUserAchievementBadges(s.id, s.points).length ? ' · ' + getUserAchievementBadges(s.id, s.points)[0] : '' }} - {{ s.points || 0 }}P) | 
           </span>
         </div>
       </div>
@@ -5131,11 +5488,33 @@ const colorForLabel = (label) => {
           <p class="theme-help">Okul kimliğine uygun paletler. Birini seç → canlı önizleme → “Tasarımı Mühürle”.</p>
           <div class="theme-presets-grid">
             <button
-              v-for="(preset, key) in themePresets"
+              v-for="(preset, key) in coreThemeEntries"
               :key="key"
               type="button"
               class="theme-preset-card"
               :class="{ recommended: key === 'akademik' }"
+              @click="applyThemePreset(key)"
+            >
+              <span class="theme-swatch-row">
+                <i :style="{ background: preset.headerBg }"></i>
+                <i :style="{ background: preset.accentColor }"></i>
+                <i :style="{ background: preset.bgColor }"></i>
+              </span>
+              <strong>{{ preset.label }}</strong>
+              <small>{{ preset.blurb }}</small>
+            </button>
+          </div>
+        </div>
+
+        <div class="s-section" style="border-left: 4px solid #c2711a;">
+          <h4>🍂 Dönem Temaları</h4>
+          <p class="theme-help">Bahar, kış ve sınav haftası için tek tık palet.</p>
+          <div class="theme-presets-grid">
+            <button
+              v-for="(preset, key) in seasonalThemeEntries"
+              :key="key"
+              type="button"
+              class="theme-preset-card"
               @click="applyThemePreset(key)"
             >
               <span class="theme-swatch-row">
@@ -5365,6 +5744,24 @@ const colorForLabel = (label) => {
           <input v-model="schoolSettings.name">
           <label>Duyuru:</label>
           <textarea v-model="schoolSettings.announcement" rows="2"></textarea>
+          <div class="row-flex" style="gap:10px; align-items:flex-end;">
+            <div style="flex:1;">
+              <label>Duyuru başlangıç</label>
+              <input type="datetime-local" v-model="schoolSettings.announcementStart">
+            </div>
+            <div style="flex:1;">
+              <label>Duyuru bitiş</label>
+              <input type="datetime-local" v-model="schoolSettings.announcementEnd">
+            </div>
+          </div>
+          <small class="theme-help">Boş bırakılırsa duyuru her zaman görünür (metin doluysa).</small>
+          <label>Haftanın sorusu etiketi</label>
+          <input v-model="schoolSettings.featuredLabel" maxlength="60" placeholder="Haftanın Sorusu">
+          <label>Haftanın sorusu</label>
+          <select v-model="schoolSettings.featuredQuestionId">
+            <option value="">— Seçilmedi —</option>
+            <option v-for="opt in approvedQuestionOptions" :key="opt.id" :value="opt.id">{{ opt.label }}</option>
+          </select>
           <label>🎯 Soru Hedefi:</label>
           <input v-model.number="schoolSettings.questionGoal" type="number" min="1" placeholder="500">
           <label>Logo URL:</label>
@@ -5376,6 +5773,21 @@ const colorForLabel = (label) => {
             </label>
             <button @click="saveAll" class="btn-save-final" :style="{background:schoolSettings.styles.accentColor}">💾 Logo ve Bilgileri Kaydet</button>
           </div>
+        </div>
+
+        <div v-if="settingsTab === 'overview' && canEditCriticalSettings()" class="s-section" style="border-left: 4px solid #0f8f78;">
+          <h4>💬 Cevap Şablonları</h4>
+          <p class="theme-help">Öğretmenlerin cevap kutusuna tek tıkla yapıştırdığı kısa metinler.</p>
+          <div v-for="(tpl, idx) in schoolSettings.answerTemplates" :key="tpl.id" class="template-edit-row">
+            <input v-model="tpl.label" placeholder="Etiket" maxlength="40">
+            <textarea v-model="tpl.body" rows="2" placeholder="Şablon metni (en az 10 karakter önerilir)"></textarea>
+            <button type="button" class="btn-tiny no" @click="schoolSettings.answerTemplates.splice(idx, 1)">Sil</button>
+          </div>
+          <button
+            type="button"
+            class="btn-add"
+            @click="schoolSettings.answerTemplates.push({ id: 't-' + Date.now(), label: 'Yeni', body: 'Çözüm: ' })"
+          >➕ Şablon Ekle</button>
         </div>
 
         <div v-if="settingsTab === 'overview'" class="s-section">
@@ -6162,6 +6574,83 @@ const colorForLabel = (label) => {
   line-height: 1.35;
   box-shadow: 0 10px 20px rgba(2, 6, 23, 0.25);
   animation: floatIn 0.65s ease-out both;
+}
+
+.featured-question {
+  padding: 12px 14px;
+  border-radius: 14px;
+  margin-bottom: 12px;
+  border-left: 4px solid var(--accent, #0f8f78);
+  animation: floatIn 0.7s ease-out both;
+}
+.featured-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.featured-question p {
+  margin: 0 0 6px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.badge-featured {
+  display: inline-block;
+  background: #c2711a;
+  color: #fff;
+  font-size: 0.68rem;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.kbd-hint {
+  font-size: 0.72rem;
+  color: #64748b;
+  font-weight: 600;
+}
+.approval-queue-item.focused {
+  background: color-mix(in srgb, var(--accent, #0f8f78) 14%, transparent);
+  border-radius: 8px;
+  padding: 2px 6px;
+}
+.template-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.tpl-chip {
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.tpl-chip:hover {
+  border-color: var(--accent, #0f8f78);
+  color: var(--accent, #0f8f78);
+}
+.reply-compact-wrap {
+  margin-top: 8px;
+}
+.template-edit-row {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed #e2e8f0;
+}
+.user-badge-chip {
+  font-size: 0.7rem;
+  font-weight: 800;
+  opacity: 0.92;
+}
+.stats-table.compact td,
+.stats-table.compact th {
+  padding: 4px 6px;
+  font-size: 0.78rem;
 }
 
 .announcement-font-preview {
