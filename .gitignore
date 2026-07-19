@@ -9,6 +9,7 @@ lerna-debug.log*
 
 node_modules
 .DS_Store
+._*
 dist
 dist-ssr
 coverage
@@ -27,6 +28,19 @@ coverage
 *.tsbuildinfo
 
 .eslintcache
+
+# Firebase
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+functions/node_modules/
+functions/lib/
+
+# Environment
+.env
+.env.local
+.env.*.local
 
 # Cypress
 /cypress/videos/
