@@ -36,9 +36,17 @@ const clearLegacyCaches = async () => {
     const keys = await caches.keys()
     await Promise.all(
       keys
-        .filter((key) => key.startsWith('adab-') && key !== 'adab-v1')
-        .map((key) => caches.delete(key))
+        .filter((key) => key.startsWith('adab-') && key !== 'adab-v3-20260719')
+        .map((key) => caches.delete(key)),
     )
+  }
+  if ('serviceWorker' in navigator) {
+    try {
+      const regs = await navigator.serviceWorker.getRegistrations()
+      await Promise.all(regs.map((reg) => reg.update()))
+    } catch {
+      // ignore
+    }
   }
 }
 
