@@ -67,6 +67,10 @@ const toast = {
 const questions = ref([]);
 const students = ref([]);
 const teachers = ref([]);
+const archivedStudents = ref([]);
+const archivedStaff = ref([]);
+const reactivateRoleDrafts = ref({});
+const activeRoleDrafts = ref({});
 const currentUser = ref(null);
 const showAuthModal = ref(false);
 const showSettingsModal = ref(false);
@@ -810,6 +814,51 @@ const getRoleLabel = (role = '') => {
   };
   return map[String(role || '').trim()] || 'Kullanıcı';
 };
+const getAssignableRoles = (user = currentUser.value) => {
+  const roles = ['student', 'teacher', 'manager'];
+  if (canEditCriticalSettings(user)) roles.push('admin');
+  return roles;
+};
+const canAssignRole = (nextRole, targetUser = null, actor = currentUser.value) => {
+  if (!canManageUsers(actor)) return false;
+  const role = String(nextRole || '').trim();
+  if (!['student', 'teacher', 'manager', 'admin'].includes(role)) return false;
+  if (role === 'admin' && !canEditCriticalSettings(actor)) return false;
+  if (targetUser?.role === 'admin' && !canEditCriticalSettings(actor)) return false;
+  return true;
+};
+const sortUsersByName = (list = []) => [...list].sort((a, b) =>
+  String(a?.name || '').localeCompare(String(b?.name || ''), 'tr', { sensitivity: 'base' })
+);
+const archivedUsers = computed(() => sortUsersByName([
+  ...archivedStudents.value,
+  ...archivedStaff.value
+]));
+const syncRoleDraftMap = (draftRef, users = []) => {
+  const next = { ...draftRef.value };
+  const ids = new Set(users.map(user => user.id));
+  Object.keys(next).forEach((id) => {
+    if (!ids.has(id)) delete next[id];
+  });
+  const allowed = getAssignableRoles();
+  users.forEach((user) => {
+    const preferred = allowed.includes(user.role) ? user.role : 'student';
+    const current = next[user.id];
+    if (!current || !allowed.includes(current)) {
+      next[user.id] = preferred;
+    }
+  });
+  draftRef.value = next;
+};
+const buildRoleChangeFields = (user, nextRole) => {
+  const payload = { role: nextRole };
+  if (nextRole === 'teacher') {
+    payload.subjects = Array.isArray(user?.subjects) ? normalizeSubjectList(user.subjects) : [];
+  } else if (nextRole === 'student') {
+    payload.subjects = [];
+  }
+  return payload;
+};
 const getRoleBadgeIcon = (role = '') => {
   const map = {
     admin: '👨‍💼',
@@ -869,49 +918,98 @@ const saveTeacherSubjects = async (teacherId) => {
   }
 };
 
-const setStaffRole = async (staff, nextRole) => {
-  if (!staff?.id) return;
-  if (!['teacher', 'manager', 'admin'].includes(nextRole)) {
-    toast.warning("Geçersiz rol seçildi.");
+const changeUserRole = async (user, nextRole) => {
+  if (!user?.id) return;
+  if (!canManageUsers()) {
+    toast.warning("Bu işlem için yönetici yetkisi gerekir.");
     return;
   }
-  if (!canEditCriticalSettings()) {
-    toast.warning("Rol güncelleme için admin yetkisi gerekir.");
+  if (!canAssignRole(nextRole, user)) {
+    toast.warning(nextRole === 'admin'
+      ? "Admin rolü sadece admin tarafından atanabilir."
+      : "Bu rol atanamaz.");
     return;
   }
-  if (staff.role === nextRole) return;
+  if (user.role === nextRole) return;
 
   const roleLabel = getRoleLabel(nextRole);
-  const currentRoleLabel = getRoleLabel(staff.role);
-  if (!confirm(`${staff.name} kullanıcısının rolü ${currentRoleLabel} yerine ${roleLabel} olsun mu?`)) {
+  const currentRoleLabel = getRoleLabel(user.role);
+  if (!confirm(`${user.name} kullanıcısının rolü ${currentRoleLabel} yerine ${roleLabel} olsun mu?`)) {
     return;
   }
 
   try {
     const batch = writeBatch(db);
-    const updatePayload = { role: nextRole };
-    if (nextRole === 'teacher' && !Array.isArray(staff.subjects)) {
-      updatePayload.subjects = [];
-    }
-    batch.update(doc(db, "users", staff.id), updatePayload);
+    batch.update(doc(db, "users", user.id), buildRoleChangeFields(user, nextRole));
     addModerationLogToBatch(batch, {
-      action: 'change_staff_role',
+      action: 'change_user_role',
       targetType: 'user',
-      targetId: staff.id,
-      targetLabel: `${staff.name} (${staff.email || '-'})`,
-      details: `${currentRoleLabel} rolunden ${roleLabel} rolune gecirildi.`
+      targetId: user.id,
+      targetLabel: `${user.name} (${user.email || '-'})`,
+      details: `${currentRoleLabel} rolünden ${roleLabel} rolüne geçirildi.`
     });
     addInboxNotificationToBatch(batch, {
-      recipientId: staff.id,
+      recipientId: user.id,
       type: 'role-updated',
-      title: 'Rolunuz guncellendi',
-      message: `Yeni rolunuz: ${roleLabel}.`,
-      relatedId: staff.id
+      title: 'Rolünüz güncellendi',
+      message: `Yeni rolünüz: ${roleLabel}.`,
+      relatedId: user.id
     });
     await batch.commit();
-    toast.success(`${staff.name} artik ${roleLabel}.`);
+    activeRoleDrafts.value = { ...activeRoleDrafts.value, [user.id]: nextRole };
+    toast.success(`${user.name} artık ${roleLabel}.`);
   } catch (error) {
-    const msg = functionErrorMessage(error, "Rol guncellenemedi.");
+    const msg = functionErrorMessage(error, "Rol güncellenemedi.");
+    systemErrors.value.unshift(msg);
+    toast.error(msg);
+  }
+};
+
+const setStaffRole = async (staff, nextRole) => changeUserRole(staff, nextRole);
+
+const reactivateUser = async (user, nextRole) => {
+  if (!user?.id) return;
+  if (!canManageUsers()) {
+    toast.warning("Bu işlem için yönetici yetkisi gerekir.");
+    return;
+  }
+  if (!canAssignRole(nextRole, user)) {
+    toast.warning(nextRole === 'admin'
+      ? "Admin rolü sadece admin tarafından atanabilir."
+      : "Bu rol atanamaz.");
+    return;
+  }
+
+  const roleLabel = getRoleLabel(nextRole);
+  const previousRoleLabel = getRoleLabel(user.role);
+  if (!confirm(`${user.name} hesabı ${roleLabel} olarak yeniden açılsın mı?`)) {
+    return;
+  }
+
+  try {
+    const batch = writeBatch(db);
+    batch.update(doc(db, "users", user.id), {
+      ...buildUserModerationFields('approved'),
+      ...buildRoleChangeFields(user, nextRole)
+    });
+    addModerationLogToBatch(batch, {
+      action: 'restore_user',
+      targetType: 'user',
+      targetId: user.id,
+      targetLabel: `${user.name} (${user.email || '-'})`,
+      details: `Pasiften ${previousRoleLabel} yerine ${roleLabel} olarak geri açıldı.`
+    });
+    addInboxNotificationToBatch(batch, {
+      recipientId: user.id,
+      type: 'account-restored',
+      title: 'Hesabınız yeniden açıldı',
+      message: `Hesabınız tekrar aktif. Rolünüz: ${roleLabel}.`,
+      relatedId: user.id
+    });
+    await batch.commit();
+    toast.success(`${user.name} ${roleLabel} olarak geri açıldı.`);
+  } catch (error) {
+    const msg = functionErrorMessage(error, "Kullanıcı geri açılamadı.");
     systemErrors.value.unshift(msg);
     toast.error(msg);
   }
@@ -1210,7 +1308,9 @@ const getModerationLogTitle = (entry) => {
     resubmit_question: 'Soru yeniden gönderildi',
     approve_answer: 'Cevap onaylandı',
     reject_answer: 'Cevap reddedildi',
-    change_staff_role: 'Personel rolü güncellendi'
+    change_staff_role: 'Personel rolü güncellendi',
+    change_user_role: 'Kullanıcı rolü güncellendi',
+    restore_user: 'Kullanıcı geri açıldı'
   };
   return actionMap[entry?.action] || 'Moderasyon işlemi';
 };
@@ -3203,6 +3303,10 @@ const stopStaffListeners = () => {
   }
   students.value = [];
   teachers.value = [];
+  archivedStudents.value = [];
+  archivedStaff.value = [];
+  reactivateRoleDrafts.value = {};
+  activeRoleDrafts.value = {};
 };
 
 const stopOwnQuestionsListener = () => {
@@ -3380,12 +3484,21 @@ const startStaffListeners = () => {
   unsubscribeTeachers = onSnapshot(
     query(collection(db, "users"), where("role", "in", STAFF_ROLES)),
     (s) => {
-      const teacherList = s.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .filter(t => !t.archived);
+      const allStaff = s.docs.map(d => ({ id: d.id, ...d.data() }));
+      const archivedList = sortUsersByName(allStaff.filter(t => t.archived));
+      const teacherList = allStaff.filter(t => !t.archived);
 
       teachers.value = teacherList;
+      archivedStaff.value = archivedList;
       syncTeacherSubjectDrafts(teacherList.filter(member => member.role === 'teacher'));
+      syncRoleDraftMap(
+        activeRoleDrafts,
+        [
+          ...teacherList.filter(member => member.isApproved),
+          ...students.value.filter(student => student.isApproved)
+        ]
+      );
+      syncRoleDraftMap(reactivateRoleDrafts, [...archivedStudents.value, ...archivedList]);
 
       const selfTeacher = teacherList.find(teacher => teacher.id === currentUser.value?.id);
       if (selfTeacher && isStaffUser(currentUser.value)) {
@@ -3394,6 +3507,7 @@ const startStaffListeners = () => {
     },
     handleSnapshotError('Personel listesi', () => {
       teachers.value = [];
+      archivedStaff.value = [];
       syncTeacherSubjectDrafts([]);
     })
   );
@@ -3408,11 +3522,21 @@ const startStudentsListener = (onlyApproved) => {
   unsubscribeStudents = onSnapshot(
     studentsQuery,
     (s) => {
-      const studentList = s.docs
-        .map(d => ({ id: d.id, ...d.data() }))
+      const allStudents = s.docs.map(d => ({ id: d.id, ...d.data() }));
+      const archivedList = sortUsersByName(allStudents.filter(student => student.archived));
+      const studentList = allStudents
         .filter(student => !student.archived)
         .sort((a, b) => (b.points || 0) - (a.points || 0));
       students.value = studentList;
+      archivedStudents.value = archivedList;
+      syncRoleDraftMap(
+        activeRoleDrafts,
+        [
+          ...studentList.filter(student => student.isApproved),
+          ...teachers.value.filter(member => member.isApproved)
+        ]
+      );
+      syncRoleDraftMap(reactivateRoleDrafts, [...archivedList, ...archivedStaff.value]);
       writeOfflineCache({
         approvedStudents: studentList.filter(student => student.isApproved)
       });
@@ -3420,6 +3544,7 @@ const startStudentsListener = (onlyApproved) => {
     handleSnapshotError('Öğrenci listesi', () => {
       const cached = readOfflineCache();
       students.value = Array.isArray(cached.approvedStudents) ? cached.approvedStudents : [];
+      archivedStudents.value = [];
     })
   );
 };
@@ -5879,8 +6004,25 @@ const colorForLabel = (label) => {
           <h4>👨‍🎓 Öğrenci Yönetimi</h4>
           <label>Onaylı Öğrenciler:</label>
           <div v-for="s in students.filter(x => x.isApproved)" :key="s.id" class="stu-row">
-            <div><b>{{ s.name }}</b> <small>({{ s.class }})</small></div>
             <div>
+              <b>{{ s.name }}</b> <small>({{ s.class }})</small>
+              <small>Rol: {{ getRoleLabel(s.role) }}</small>
+            </div>
+            <div>
+              <div v-if="canManageUsers()" class="actions-compact" style="margin-bottom: 6px;">
+                <select v-model="activeRoleDrafts[s.id]">
+                  <option v-for="role in getAssignableRoles()" :key="`stu-role-${s.id}-${role}`" :value="role">
+                    {{ getRoleLabel(role) }}
+                  </option>
+                </select>
+                <button
+                  @click="changeUserRole(s, activeRoleDrafts[s.id] || s.role)"
+                  class="btn-tiny ok"
+                  :disabled="(activeRoleDrafts[s.id] || s.role) === s.role"
+                >
+                  Rolü Değiştir
+                </button>
+              </div>
               <button @click="deleteStudent(s.id)" class="btn-tiny no">🗑️ Pasife Al</button>
             </div>
           </div>
@@ -5924,12 +6066,39 @@ const colorForLabel = (label) => {
             </div>
             <div>
               <button v-if="t.role === 'teacher'" @click="saveTeacherSubjects(t.id)" class="btn-tiny ok">💾 Dersleri Kaydet</button>
-              <div v-if="canEditCriticalSettings()" class="actions-compact">
-                <button @click="setStaffRole(t, 'teacher')" class="btn-tiny send">Ogretmen</button>
-                <button @click="setStaffRole(t, 'manager')" class="btn-tiny ok">Yonetici</button>
-                <button @click="setStaffRole(t, 'admin')" class="btn-tiny ok">Admin</button>
+              <div v-if="canManageUsers()" class="actions-compact">
+                <button @click="changeUserRole(t, 'student')" class="btn-tiny send">Öğrenci</button>
+                <button @click="changeUserRole(t, 'teacher')" class="btn-tiny send">Öğretmen</button>
+                <button @click="changeUserRole(t, 'manager')" class="btn-tiny ok">Yönetici</button>
+                <button v-if="canEditCriticalSettings()" @click="changeUserRole(t, 'admin')" class="btn-tiny ok">Admin</button>
               </div>
               <button @click="rejectTeacher(t.id)" class="btn-tiny no">🗑️ Pasife Al</button>
+            </div>
+          </div>
+        </div>
+
+        <div v-if="settingsTab === 'people' && canManageUsers()" class="s-section">
+          <h4>♻️ Pasife Alınanlar</h4>
+          <small>Pasife alınan kişi tekrar açılırken yeni rol seçilir.</small>
+          <div v-if="!archivedUsers.length" class="empty-msg">Pasife alınan kullanıcı yok</div>
+          <div v-for="u in archivedUsers" :key="`archived-${u.id}`" class="stu-row">
+            <div>
+              <b>{{ u.name }}</b> <small>({{ u.email || '-' }})</small>
+              <small>Önceki rol: {{ getRoleLabel(u.role) }}</small>
+              <small v-if="u.rejectionReason">Gerekçe: {{ u.rejectionReason }}</small>
+            </div>
+            <div class="actions-compact">
+              <select v-model="reactivateRoleDrafts[u.id]">
+                <option v-for="role in getAssignableRoles()" :key="`restore-role-${u.id}-${role}`" :value="role">
+                  {{ getRoleLabel(role) }}
+                </option>
+              </select>
+              <button
+                @click="reactivateUser(u, reactivateRoleDrafts[u.id] || 'student')"
+                class="btn-tiny ok"
+              >
+                Geri Aç ve Rol Ver
+              </button>
             </div>
           </div>
         </div>

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'adab-v7-20260720-suite';
+const CACHE_NAME = 'adab-v8-20260720-roles';
 
 // Do not precache index.html — hashed assets are addressed by network HTML.
 self.addEventListener('install', (event) => {
