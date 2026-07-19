@@ -266,8 +266,31 @@ const defaultSettings = {
     titleFont: "'Playfair Display', Georgia, serif",
     titleSize: 26,
     titleColor: '#f7fafc',
-    darkMode: false
+    darkMode: false,
+    bgPattern: 'defter',
+    bgPatternStrength: 0.14
   }
+};
+
+/** Eğitim dokulu arka plan desenleri (saf CSS, dış görsel yok) */
+const bgPatternCatalog = {
+  none: { label: 'Düz', blurb: 'Desen yok; sadece renk ve ışıltı' },
+  defter: { label: 'Defter', blurb: 'Çizgili sayfa + sol kenar boşluğu' },
+  kareli: { label: 'Kareli', blurb: 'Matematik kâğıdı ızgarası' },
+  tahta: { label: 'Kara Tahta', blurb: 'Hafif tebeşir tozu dokusu' },
+  kitaplik: { label: 'Kitaplık', blurb: 'Raf şeritleri; kütüphane hissi' },
+  kampus: { label: 'Kampüs', blurb: 'Elmas ızgara geometrik doku' },
+  yildiz: { label: 'Gece Çalışma', blurb: 'Yumuşak yıldız noktaları' }
+};
+
+const hexLuminance = (hex) => {
+  const raw = String(hex || '').replace('#', '').trim();
+  if (raw.length < 6) return 0.15;
+  const r = parseInt(raw.slice(0, 2), 16) / 255;
+  const g = parseInt(raw.slice(2, 4), 16) / 255;
+  const b = parseInt(raw.slice(4, 6), 16) / 255;
+  const lin = (c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
 };
 
 // --- TEMA KATALOĞU (okul kimliği odaklı; mor/indigo varsayılanlardan uzak) ---
@@ -279,7 +302,8 @@ const themePresets = {
     footerText: '#e8c468', footerBg: '#0f1c2e', bodyText: '#1f2a37',
     bgColor: '#101b2d', titleColor: '#f7fafc', cardRadius: 16, darkMode: false,
     fontFamily: "'Manrope', system-ui, sans-serif",
-    titleFont: "'Playfair Display', Georgia, serif", titleSize: 26
+    titleFont: "'Playfair Display', Georgia, serif", titleSize: 26,
+    bgPattern: 'defter', bgPatternStrength: 0.14
   },
   sakin: {
     label: 'Sakin Odak',
@@ -288,7 +312,8 @@ const themePresets = {
     footerText: '#b7e4c7', footerBg: '#153138', bodyText: '#24333a',
     bgColor: '#e8eef1', titleColor: '#f4fbfb', cardRadius: 14, darkMode: false,
     fontFamily: "'Manrope', system-ui, sans-serif",
-    titleFont: "'Manrope', system-ui, sans-serif", titleSize: 24
+    titleFont: "'Manrope', system-ui, sans-serif", titleSize: 24,
+    bgPattern: 'kampus', bgPatternStrength: 0.1
   },
   etkinlik: {
     label: 'Canlı Etkinlik',
@@ -297,7 +322,8 @@ const themePresets = {
     footerText: '#ffe8a3', footerBg: '#082119', bodyText: '#14231c',
     bgColor: '#0d221b', titleColor: '#ffffff', cardRadius: 18, darkMode: false,
     fontFamily: "'Manrope', system-ui, sans-serif",
-    titleFont: "'Playfair Display', Georgia, serif", titleSize: 28
+    titleFont: "'Playfair Display', Georgia, serif", titleSize: 28,
+    bgPattern: 'kampus', bgPatternStrength: 0.16
   },
   kampus: {
     label: 'Kampüs Ormanı',
@@ -306,7 +332,8 @@ const themePresets = {
     footerText: '#c6f0df', footerBg: '#0e322b', bodyText: '#1c322b',
     bgColor: '#0c281f', titleColor: '#f1fcf7', cardRadius: 14, darkMode: false,
     fontFamily: "'Manrope', system-ui, sans-serif",
-    titleFont: "'Playfair Display', Georgia, serif", titleSize: 25
+    titleFont: "'Playfair Display', Georgia, serif", titleSize: 25,
+    bgPattern: 'kitaplik', bgPatternStrength: 0.13
   },
   gunisigi: {
     label: 'Gündüz Net',
@@ -315,7 +342,8 @@ const themePresets = {
     footerText: '#334155', footerBg: '#e8eef4', bodyText: '#1e293b',
     bgColor: '#dbe4ee', titleColor: '#0f2740', cardRadius: 12, darkMode: false,
     fontFamily: "'Manrope', system-ui, sans-serif",
-    titleFont: "'Manrope', system-ui, sans-serif", titleSize: 23
+    titleFont: "'Manrope', system-ui, sans-serif", titleSize: 23,
+    bgPattern: 'kareli', bgPatternStrength: 0.12
   },
   zümre: {
     label: 'Zümre Lacivert',
@@ -324,7 +352,8 @@ const themePresets = {
     footerText: '#d4b483', footerBg: '#141e36', bodyText: '#1f2937',
     bgColor: '#121a2d', titleColor: '#f8fafc', cardRadius: 12, darkMode: false,
     fontFamily: "'Manrope', system-ui, sans-serif",
-    titleFont: "'Playfair Display', Georgia, serif", titleSize: 26
+    titleFont: "'Playfair Display', Georgia, serif", titleSize: 26,
+    bgPattern: 'defter', bgPatternStrength: 0.12
   },
   mezuniyet: {
     label: 'Mezuniyet',
@@ -333,7 +362,8 @@ const themePresets = {
     footerText: '#e6c989', footerBg: '#0d272f', bodyText: '#1e2f35',
     bgColor: '#0b2229', titleColor: '#ffffff', cardRadius: 16, darkMode: false,
     fontFamily: "'Manrope', system-ui, sans-serif",
-    titleFont: "'Playfair Display', Georgia, serif", titleSize: 27
+    titleFont: "'Playfair Display', Georgia, serif", titleSize: 27,
+    bgPattern: 'yildiz', bgPatternStrength: 0.18
   },
   gece: {
     label: 'Gece Ders',
@@ -342,7 +372,8 @@ const themePresets = {
     footerText: '#f0d78c', footerBg: '#10151b', bodyText: '#d8dee6',
     bgColor: '#0b0f14', titleColor: '#f8fafc', cardRadius: 14, darkMode: true,
     fontFamily: "'Manrope', system-ui, sans-serif",
-    titleFont: "'Manrope', system-ui, sans-serif", titleSize: 24
+    titleFont: "'Manrope', system-ui, sans-serif", titleSize: 24,
+    bgPattern: 'tahta', bgPatternStrength: 0.2
   }
 };
 
@@ -360,7 +391,28 @@ const applyThemePreset = (presetKey) => {
   toast.success(`"${label}" teması uygulandı.`);
 };
 
+const applyBgPattern = (patternKey) => {
+  if (!bgPatternCatalog[patternKey]) return;
+  schoolSettings.value.styles.bgPattern = patternKey;
+  toast.success(`"${bgPatternCatalog[patternKey].label}" deseni seçildi.`);
+};
+
 const schoolSettings = ref(JSON.parse(JSON.stringify(defaultSettings)));
+
+const bgPatternClass = computed(() => {
+  const key = schoolSettings.value.styles?.bgPattern || 'none';
+  return bgPatternCatalog[key] ? `bg-pattern-${key}` : 'bg-pattern-none';
+});
+const bgPatternInk = computed(() => (
+  hexLuminance(schoolSettings.value.styles?.bgColor) > 0.45
+    ? 'rgba(22, 40, 56, 0.9)'
+    : 'rgba(236, 245, 250, 0.9)'
+));
+const bgPatternStrength = computed(() => {
+  const n = Number(schoolSettings.value.styles?.bgPatternStrength);
+  if (!Number.isFinite(n)) return 0.14;
+  return Math.min(0.35, Math.max(0.04, n));
+});
 
 const normalizeEmailInput = (value) => String(value || '').trim().toLowerCase();
 const normalizeEmailList = (emails = []) => {
@@ -4162,7 +4214,7 @@ const colorForLabel = (label) => {
 
 <template>
   <ToastNotification ref="toastRef" />
-  <div v-if="isSettingsLoaded" class="app-container" :class="{ 'dark-mode': schoolSettings.styles.darkMode }" :style="{ 
+  <div v-if="isSettingsLoaded" class="app-container" :class="[{ 'dark-mode': schoolSettings.styles.darkMode }, bgPatternClass]" :style="{ 
     fontFamily: schoolSettings.styles.customFontName ? schoolSettings.styles.customFontName : schoolSettings.styles.fontFamily, 
     fontSize: schoolSettings.styles.baseFontSize + 'px',
     color: schoolSettings.styles.bodyText,
@@ -4174,7 +4226,9 @@ const colorForLabel = (label) => {
     '--footer-bg': schoolSettings.styles.footerBg || schoolSettings.styles.headerBg,
     '--bg-color': schoolSettings.styles.bgColor || '#101b2d',
     '--card-radius': (schoolSettings.styles.cardRadius || 14) + 'px',
-    '--title-color': schoolSettings.styles.titleColor
+    '--title-color': schoolSettings.styles.titleColor,
+    '--bg-pattern-ink': bgPatternInk,
+    '--bg-pattern-strength': bgPatternStrength
   }">
     <component :is="'style'" v-if="sanitizeFontUrl(schoolSettings.styles.customFontUrl)">
       @import url('{{ sanitizeFontUrl(schoolSettings.styles.customFontUrl) }}');
@@ -5081,6 +5135,33 @@ const colorForLabel = (label) => {
           </div>
         </div>
         
+        <div class="s-section" style="border-left: 4px solid #0b7f86;">
+          <h4>📐 Arka Plan Dokusu</h4>
+          <p class="theme-help">Eğitim temalı desenler. Tema paketleri de uygun deseni önerir; buradan bağımsız değiştirebilirsiniz.</p>
+          <div class="theme-presets-grid bg-pattern-grid">
+            <button
+              v-for="(meta, key) in bgPatternCatalog"
+              :key="key"
+              type="button"
+              class="theme-preset-card"
+              :class="{ recommended: schoolSettings.styles.bgPattern === key }"
+              @click="applyBgPattern(key)"
+            >
+              <span class="pattern-mini" :class="'bg-pattern-' + key" :style="{ '--bg-pattern-ink': bgPatternInk, '--bg-pattern-strength': 0.55, backgroundColor: schoolSettings.styles.bgColor }"></span>
+              <strong>{{ meta.label }}</strong>
+              <small>{{ meta.blurb }}</small>
+            </button>
+          </div>
+          <label style="margin-top:10px; display:block;">Desen yoğunluğu: {{ Math.round((schoolSettings.styles.bgPatternStrength || 0.14) * 100) }}%</label>
+          <input
+            type="range"
+            min="0.04"
+            max="0.3"
+            step="0.01"
+            v-model.number="schoolSettings.styles.bgPatternStrength"
+          />
+        </div>
+
         <div class="s-section" style="border-left: 4px solid #f39c12;">
           <h4>📏 Başlık Ayarları</h4>
           <label>Font:</label>
@@ -5152,7 +5233,17 @@ const colorForLabel = (label) => {
         <!-- CANLI ÖNİZLEME -->
         <div class="s-section" style="border-left: 4px solid #10b981;">
           <h4>👁️ Canlı Önizleme</h4>
-          <div class="design-preview" :class="{ 'dark-mode': schoolSettings.styles.darkMode }" :style="{ background: schoolSettings.styles.bgColor, borderRadius: schoolSettings.styles.cardRadius + 'px' }">
+          <div
+            class="design-preview"
+            :class="[{ 'dark-mode': schoolSettings.styles.darkMode }, bgPatternClass]"
+            :style="{
+              backgroundColor: schoolSettings.styles.bgColor,
+              borderRadius: schoolSettings.styles.cardRadius + 'px',
+              '--bg-color': schoolSettings.styles.bgColor,
+              '--bg-pattern-ink': bgPatternInk,
+              '--bg-pattern-strength': bgPatternStrength
+            }"
+          >
             <div class="preview-header" :style="{ background: schoolSettings.styles.headerBg, color: schoolSettings.styles.headerText, borderRadius: schoolSettings.styles.cardRadius + 'px ' + schoolSettings.styles.cardRadius + 'px 0 0' }">
               <span :style="{ fontFamily: schoolSettings.styles.titleFont, fontSize: (schoolSettings.styles.titleSize * 0.6) + 'px', color: schoolSettings.styles.titleColor }">DİJİTAL İMECE</span>
             </div>
@@ -5688,13 +5779,27 @@ const colorForLabel = (label) => {
   min-height: 100vh; 
   display: flex; 
   flex-direction: column; 
-  align-items: center; 
+  align-items: center;
+  position: relative;
+  isolation: isolate;
   background:
     radial-gradient(920px 580px at 12% -8%, color-mix(in srgb, var(--accent, #0f8f78) 30%, transparent), transparent 62%),
     radial-gradient(780px 520px at 100% 4%, color-mix(in srgb, var(--footer-text, #e8c468) 16%, transparent), transparent 58%),
     radial-gradient(720px 480px at 48% 108%, color-mix(in srgb, var(--accent, #0f8f78) 12%, transparent), transparent 60%),
     linear-gradient(180deg, var(--bg-color, #101b2d) 0%, color-mix(in srgb, var(--bg-color, #111827) 88%, white) 55%, var(--bg-color, #101b2d) 100%);
   background-attachment: fixed; 
+}
+.app-container > * {
+  position: relative;
+  z-index: 1;
+}
+.app-container::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: var(--bg-pattern-strength, 0.14);
 }
 
 .app-container.dark-mode .glass-premium {
@@ -7415,11 +7520,132 @@ small {
   border: 1px solid rgba(15, 23, 42, 0.08);
 }
 
+/* EDUCATION BACKGROUND PATTERNS */
+.pattern-mini {
+  display: block;
+  width: 100%;
+  height: 38px;
+  border-radius: 7px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  position: relative;
+  overflow: hidden;
+}
+.pattern-mini::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: var(--bg-pattern-strength, 0.45);
+}
+.pattern-mini.bg-pattern-none::after {
+  display: none;
+}
+
+.app-container.bg-pattern-none::before,
+.design-preview.bg-pattern-none::before {
+  display: none;
+}
+
+.app-container.bg-pattern-defter::before,
+.design-preview.bg-pattern-defter::before,
+.pattern-mini.bg-pattern-defter::after {
+  background-image:
+    linear-gradient(90deg, color-mix(in srgb, #c45c5c 70%, transparent) 0 2px, transparent 2px),
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0 26px,
+      var(--bg-pattern-ink) 26px 27px
+    );
+  background-size: 100% 100%, 100% 27px;
+  background-position: 42px 0, 0 8px;
+}
+
+.app-container.bg-pattern-kareli::before,
+.design-preview.bg-pattern-kareli::before,
+.pattern-mini.bg-pattern-kareli::after {
+  background-image:
+    linear-gradient(var(--bg-pattern-ink) 1px, transparent 1px),
+    linear-gradient(90deg, var(--bg-pattern-ink) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+.app-container.bg-pattern-tahta::before,
+.design-preview.bg-pattern-tahta::before,
+.pattern-mini.bg-pattern-tahta::after {
+  background-image:
+    radial-gradient(circle at 18% 22%, var(--bg-pattern-ink) 0.55px, transparent 0.85px),
+    radial-gradient(circle at 72% 48%, var(--bg-pattern-ink) 0.45px, transparent 0.75px),
+    radial-gradient(circle at 40% 78%, var(--bg-pattern-ink) 0.5px, transparent 0.8px),
+    radial-gradient(circle at 86% 16%, var(--bg-pattern-ink) 0.4px, transparent 0.7px),
+    repeating-linear-gradient(
+      -16deg,
+      transparent 0 16px,
+      color-mix(in srgb, var(--bg-pattern-ink) 35%, transparent) 16px 17px
+    );
+  background-size: 52px 52px, 70px 70px, 44px 44px, 60px 60px, 100% 100%;
+}
+
+.app-container.bg-pattern-kitaplik::before,
+.design-preview.bg-pattern-kitaplik::before,
+.pattern-mini.bg-pattern-kitaplik::after {
+  background-image:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0 16px,
+      var(--bg-pattern-ink) 16px 17px,
+      transparent 17px 30px,
+      var(--bg-pattern-ink) 30px 31px,
+      transparent 31px 48px,
+      var(--bg-pattern-ink) 48px 50px,
+      transparent 50px 62px
+    ),
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0 56px,
+      var(--bg-pattern-ink) 56px 58px
+    );
+}
+
+.app-container.bg-pattern-kampus::before,
+.design-preview.bg-pattern-kampus::before,
+.pattern-mini.bg-pattern-kampus::after {
+  background-image:
+    repeating-linear-gradient(45deg, transparent 0 18px, var(--bg-pattern-ink) 18px 19px),
+    repeating-linear-gradient(-45deg, transparent 0 18px, var(--bg-pattern-ink) 18px 19px);
+}
+
+.app-container.bg-pattern-yildiz::before,
+.design-preview.bg-pattern-yildiz::before,
+.pattern-mini.bg-pattern-yildiz::after {
+  background-image:
+    radial-gradient(1.3px 1.3px at 12% 18%, var(--bg-pattern-ink), transparent),
+    radial-gradient(1px 1px at 78% 32%, var(--bg-pattern-ink), transparent),
+    radial-gradient(1.4px 1.4px at 42% 70%, var(--bg-pattern-ink), transparent),
+    radial-gradient(0.9px 0.9px at 88% 78%, var(--bg-pattern-ink), transparent),
+    radial-gradient(1.1px 1.1px at 28% 48%, var(--bg-pattern-ink), transparent),
+    radial-gradient(1.2px 1.2px at 60% 12%, var(--bg-pattern-ink), transparent);
+  background-size: 140px 140px;
+}
+
 /* DESIGN PREVIEW */
 .design-preview {
   border: 1px solid rgba(0,0,0,0.1);
   overflow: hidden;
   min-height: 120px;
+  position: relative;
+  isolation: isolate;
+}
+.design-preview::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: var(--bg-pattern-strength, 0.14);
+}
+.design-preview > * {
+  position: relative;
+  z-index: 1;
 }
 
 .preview-header {
