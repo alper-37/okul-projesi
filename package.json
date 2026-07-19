@@ -3,13 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "preview": "vite preview",
-    "type-check": "vue-tsc --build",
-    "build-only": "node --max-old-space-size=4096 node_modules/vite/bin/vite.js build",
-    "build": "run-p type-check build-only"
-  },
+ "scripts": {
+  "build": "vite build"
+},
   "dependencies": {
     "chart.js": "^4.5.1",
     "firebase": "^12.9.0",

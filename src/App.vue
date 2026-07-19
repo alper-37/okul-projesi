@@ -39,7 +39,7 @@ const itemsPerPage = 4;
 
 const schoolSettings = ref({
   name: 'Taşköprü Anadolu İmam Hatip Lisesi',
-  schoolCode: 'TAIHL2026',
+ schoolCode: '12345',
   logo: 'https://img.icons8.com/color/96/graduation-cap.png',
   announcement: '2026 Eğitim Öğretim Yılı Hayırlı Olsun.',
   subjects: ['Matematik', 'Edebiyat', 'Fizik', 'Tarih', 'Din K.', 'Rehberlik'],
@@ -114,8 +114,16 @@ const handleGoogleLogin = async () => {
       currentUser.value = { id: user.uid, ...userData };
       showAuthModal.value = false;
     } else {
-      alert("Kullanıcı bulunamadı. Lütfen kanıtlama koduyla kaydolun.");
-      signOut(auth);
+      await setDoc(doc(db, 'users', user.uid), {
+        name: user.displayName || 'Google Kullanıcısı',
+        email: user.email || '',
+        role: 'student',
+        points: 0,
+        isApproved: false,
+        createdAt: serverTimestamp()
+      });
+      alert("✅ Kaydınız alındı. Yönetici onayı bekleniyor.");
+      await signOut(auth);
     }
   } catch (error) {
     alert("Google giriş hatası: " + error.message);
@@ -221,7 +229,7 @@ const handleTeacherRegister = async () => {
       createdAt: serverTimestamp()
     });
 
-    alert("✅ Öğretmen kayıtlaması başarılı! Admin onayı bekleniyor.");
+    alert("✅ Öğretmen kaydı başarılı! Admin onayı bekleniyor.");
     authTab.value = 'login';
     registerTab.value = 'student';
     registerForm.value = { name: '', email: '', password: '', confirmPassword: '', class: '', number: '', schoolCode: '' };
@@ -381,6 +389,7 @@ const downloadNotebook = () => {
   const blob = new Blob([JSON.stringify(aiData, null, 2)], { type: "application/json" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "ADAB_AI_Dataset.json"; a.click();
 };
+
 let unsubscribeQuestions = null;
 let unsubscribeStudents = null;
 let unsubscribeTeachers = null;
@@ -399,11 +408,10 @@ const stopStaffListeners = () => {
 };
 
 const startStaffListeners = () => {
-  stopStaffListeners();
-  unsubscribeStudents = onSnapshot(
-    query(collection(db, "users"), where("role", "==", "student"), orderBy("points", "desc")),
-    (s) => students.value = s.docs.map(d => ({ id: d.id, ...d.data() }))
-  );
+  // Bu fonksiyon artık sadece öğretmen listesini çekmek için veya admin paneli için kullanılabilir
+  // Öğrenci listesi onMounted içinde genel olarak çekiliyor.
+  if (unsubscribeTeachers) unsubscribeTeachers();
+  
   unsubscribeTeachers = onSnapshot(
     query(collection(db, "users"), where("role", "==", "teacher")),
     (s) => teachers.value = s.docs.map(d => ({ id: d.id, ...d.data() }))
@@ -425,8 +433,22 @@ const loadSettings = async () => {
   if (docSnap.exists()) schoolSettings.value = docSnap.data();
 };
 
-// --- UYGULAMA BAŞLATMA ---
-  onMounted(async () => {
+// --- UYGULAMA BAŞLATMA (GÜNCELLENMİŞ HALİ) ---
+onMounted(async () => {
+  // 1. Ziyaretçiler dahil HERKES için ayarları yükle
+  await loadSettings();
+  
+  // 2. Soruları hemen çekmeye başla (Giriş yapılmamış modda)
+  startQuestionsListener(false);
+
+  // 3. Liderlik Tablosunu (Öğrencileri) Herkese Aç (Ziyaretçiler de görsün)
+  if (unsubscribeStudents) unsubscribeStudents();
+  unsubscribeStudents = onSnapshot(
+    query(collection(db, "users"), where("role", "==", "student"), orderBy("points", "desc")),
+    (s) => students.value = s.docs.map(d => ({ id: d.id, ...d.data() }))
+  );
+
+  // 4. Kullanıcı oturum durumunu takip et
   onAuthStateChanged(auth, async (firebaseUser) => {
     if (firebaseUser) {
       const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
@@ -434,38 +456,26 @@ const loadSettings = async () => {
         const userData = userDoc.data();
         if (userData.isApproved) {
           currentUser.value = { id: firebaseUser.uid, ...userData };
+          
+          // Giriş yapana tüm soruları (onay bekleyen dahil) göster
           startQuestionsListener(true);
 
           if (userData.role === 'admin' || userData.role === 'teacher') {
-            startStaffListeners();
-          } else {
-            stopStaffListeners();
+            startStaffListeners(); // Öğretmenleri de çek
           }
-
-          await loadSettings();
           return;
         }
       }
       await signOut(auth);
+    } else {
+      // Giriş yoksa (ziyaretçiyse)
+      currentUser.value = null;
+      // Sorular zaten yukarıda false moduyla çekildi, tekrar çağırmaya gerek yok
+      // ama emin olmak isterseniz: startQuestionsListener(false);
     }
-
-    currentUser.value = null;
-    startQuestionsListener(false);
-    stopStaffListeners();
   });
 });
-const chartData = computed(() => {
-  const approvedQs = questions.value.filter(q => q.isApproved);
-  const counts = {};
-  approvedQs.forEach(q => counts[q.subject] = (counts[q.subject] || 0) + 1);
-  return {
-    labels: Object.keys(counts),
-    datasets: [{
-      backgroundColor: ['#16a085', '#2980b9', '#f39c12', '#d35400', '#1e293b'],
-      data: Object.values(counts)
-    }]
-  };
-});
+
 const goalData = computed(() => ({
   labels: ['Mevcut', 'Hedef (500)'],
   datasets: [{ 
@@ -525,7 +535,16 @@ const goalData = computed(() => ({
       </div>
 
       <div class="search-bar"><input v-model="searchQuery" placeholder="🔍 Konu, öğrenci veya sınıf ara..." class="search-input"></div>
-      <button @click="currentUser ? showAskModal = true : showAuthModal = true" class="btn-ask-compact" :style="{ backgroundColor: schoolSettings.styles.accentColor }">➕ YENİ SORU</button>
+      
+      <button v-if="currentUser" @click="showAskModal = true" class="btn-ask-compact" :style="{ backgroundColor: schoolSettings.styles.accentColor }">
+        ➕ YENİ SORU SOR
+      </button>
+
+      <div v-else class="visitor-alert-box">
+        <p>📢 <b>Soru ve cevapları inceleyebilirsiniz.</b></p>
+        <p>Soru sormak veya cevap yazmak için lütfen giriş yapın.</p>
+        <button @click="showAuthModal = true" class="btn-login-alert">GİRİŞ YAP / KAYIT OL</button>
+      </div>
 
       <div class="feed">
         <div v-for="q in paginatedQuestions" :key="q.id" class="post-card compact glass-premium" :class="{pending: !q.isApproved}">
@@ -569,12 +588,18 @@ const goalData = computed(() => ({
     <footer class="footer-wrapper">
       <div class="center-column marquee-box glass-premium" :style="{ backgroundColor: schoolSettings.styles.headerBg, color: schoolSettings.styles.footerText, borderColor: schoolSettings.styles.accentColor }">
         <div class="marquee-content">
-          🏆 Liderlik: <span v-for="s in students.slice(0,3)" :key="s.id">{{ s.name }} ({{ getUserBadge(s.points) }} - {{ s.points || 0 }}P) | </span>
+          🏆 LİDERLİK TABLOSU: 
+          <span v-for="(s, index) in students.slice(0, 10)" :key="s.id" style="margin-right: 15px;">
+             <span v-if="index === 0">🥇</span>
+             <span v-else-if="index === 1">🥈</span>
+             <span v-else-if="index === 2">🥉</span>
+             <span v-else>{{ index + 1 }}.</span>
+             {{ s.name }} ({{ getUserBadge(s.points) }} - {{ s.points || 0 }}P) | 
+          </span>
         </div>
       </div>
     </footer>
 
-    <!-- GİRİŞ VE KAYIT MODAL -->
     <div v-if="showAuthModal" class="modal-overlay">
       <div class="modal-box">
         <div class="tabs">
@@ -582,7 +607,6 @@ const goalData = computed(() => ({
           <button @click="authTab='register'" :class="{active:authTab=='register'}">Kayıt</button>
         </div>
 
-        <!-- GİRİŞ SEKMESİ -->
         <div v-if="authTab=='login'">
           <h3>Giriş Yap</h3>
           <input v-model="loginForm.email" type="email" placeholder="E-posta Adresi">
@@ -592,14 +616,12 @@ const goalData = computed(() => ({
           <button @click="handleGoogleLogin" class="btn-google">🔵 GOOGLE İLE GİRİŞ</button>
         </div>
 
-        <!-- KAYIT SEKMESİ -->
         <div v-else>
           <div class="register-tabs">
             <button @click="registerTab='student'" :class="{active:registerTab=='student'}">👨‍🎓 Öğrenci</button>
             <button @click="registerTab='teacher'" :class="{active:registerTab=='teacher'}">👨‍🏫 Öğretmen</button>
           </div>
 
-          <!-- ÖĞRENCİ KAYDI -->
           <div v-if="registerTab=='student'">
             <h3>Öğrenci Kaydı</h3>
             <input v-model="registerForm.name" placeholder="Ad Soyad">
@@ -615,7 +637,6 @@ const goalData = computed(() => ({
             <button @click="handleStudentRegister" class="btn-save-final" :style="{background:schoolSettings.styles.accentColor}">📚 KAYIT OL</button>
           </div>
 
-          <!-- ÖĞRETMEN KAYDI -->
           <div v-else>
             <h3>Öğretmen Kaydı</h3>
             <input v-model="registerForm.name" placeholder="Adı Soyadı">
@@ -632,7 +653,6 @@ const goalData = computed(() => ({
       </div>
     </div>
 
-    <!-- SORU SORMA MODAL -->
     <div v-if="showAskModal && currentUser" class="modal-overlay">
       <div class="modal-box">
         <h3>❓ Soru Sor</h3>
@@ -656,7 +676,6 @@ const goalData = computed(() => ({
       </div>
     </div>
 
-    <!-- TASARIM MODAL -->
     <div v-if="showDesignModal" class="modal-overlay">
       <div class="modal-box large">
         <h3>🎨 Tasarım Stüdyosu</h3>
@@ -711,12 +730,10 @@ const goalData = computed(() => ({
       </div>
     </div>
 
-    <!-- AYARLAR VE YÖNETİM MODAL -->
     <div v-if="showSettingsModal" class="modal-overlay">
       <div class="modal-box large">
         <h3>⚙️ Yönetim Paneli</h3>
 
-        <!-- GÜVENLI YÖNETİM BÖLÜMÜ -->
         <div class="s-section safe-zone" style="border-left: 4px solid #e74c3c;">
           <h4>🔒 Güvenlik & Yedekleme</h4>
           <div class="row-flex">
@@ -728,7 +745,6 @@ const goalData = computed(() => ({
           </div>
         </div>
 
-        <!-- OKUL BİLGİLERİ -->
         <div class="s-section">
           <h4>🏫 Okul Bilgileri</h4>
           <label>Okul Adı:</label>
@@ -741,7 +757,6 @@ const goalData = computed(() => ({
           <input v-model="schoolSettings.logo">
         </div>
 
-        <!-- DERS YÖNETİMİ -->
         <div class="s-section">
           <h4>📖 Ders Yönetimi</h4>
           <div class="row-flex">
@@ -755,7 +770,6 @@ const goalData = computed(() => ({
           </div>
         </div>
 
-        <!-- SINIF YÖNETİMİ -->
         <div class="s-section">
           <h4>👥 Sınıf Yönetimi</h4>
           <div class="row-flex">
@@ -769,7 +783,6 @@ const goalData = computed(() => ({
           </div>
         </div>
 
-        <!-- ÖĞRENCİ AYAR YÖNETİMİ -->
         <div class="s-section">
           <h4>👨‍🎓 Öğrenci Yönetimi</h4>
           <div class="stu-section">
@@ -785,7 +798,6 @@ const goalData = computed(() => ({
           </div>
         </div>
 
-        <!-- ÖĞRETMEN AYAR YÖNETİMİ -->
         <div class="s-section">
           <h4>👨‍🏫 Öğretmen Yönetimi</h4>
           <div class="stu-section">
@@ -820,7 +832,31 @@ const goalData = computed(() => ({
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=Poppins:wght@400;700&family=Montserrat:wght@400;700&display=swap');
 
 * { box-sizing: border-box; }
+.visitor-alert-box {
+  background: #f8f9fa;
+  border: 2px dashed #6c757d;
+  padding: 15px;
+  border-radius: 12px;
+  text-align: center;
+  margin: 15px auto;
+  max-width: 600px;
+}
 
+.visitor-alert-box p {
+  margin: 5px 0;
+  color: #343a40;
+}
+
+.btn-login-alert {
+  background: #28a745; /* Yeşil tonu */
+  color: white;
+  border: none;
+  padding: 8px 20px;
+  border-radius: 20px;
+  cursor: pointer;
+  font-weight: bold;
+  margin-top: 10px;
+}
 .app-container { 
   min-height: 100vh; 
   display: flex; 
@@ -1249,11 +1285,16 @@ const goalData = computed(() => ({
   padding: 5px 0; 
 }
 
-.marquee-box { 
-  display: flex; 
-  align-items: center; 
-  padding: 8px; 
-  border-top: 3px solid; 
+.marquee-box {
+    display: flex;
+    align-items: center;
+    padding: 8px;
+    border-top: 3px solid;
+    width: 92%;
+    max-width: 650px;
+    margin: 0 auto;
+    overflow: hidden;
+    position: relative;
 }
 
 .marquee-content { 
