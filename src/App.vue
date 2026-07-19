@@ -251,41 +251,113 @@ const defaultSettings = {
   classes: ['9. Sınıf', '10. Sınıf', '11. Sınıf', '12. Sınıf'],
   questionGoal: 500,
   styles: {
-    fontFamily: "'Inter', sans-serif",
+    fontFamily: "'Manrope', system-ui, sans-serif",
     customFontUrl: '',
     customFontName: '',
     baseFontSize: 15,
-    headerBg: '#1e293b',
-    headerText: '#ffffff',
-    accentColor: '#16a085',
-    footerText: '#fbbf24',
-    footerBg: '#1e293b',
-    bodyText: '#333333',
-    bgColor: '#0c1324',
-    cardRadius: 14,
-    titleFont: "'Inter', sans-serif",
-    titleSize: 24,
-    titleColor: '#ffffff',
+    headerBg: '#132337',
+    headerText: '#e8eef6',
+    accentColor: '#0f8f78',
+    footerText: '#e8c468',
+    footerBg: '#0f1c2e',
+    bodyText: '#1f2a37',
+    bgColor: '#101b2d',
+    cardRadius: 16,
+    titleFont: "'Playfair Display', Georgia, serif",
+    titleSize: 26,
+    titleColor: '#f7fafc',
     darkMode: false
   }
 };
 
-// --- TEMA PRESET'LERİ ---
+// --- TEMA KATALOĞU (okul kimliği odaklı; mor/indigo varsayılanlardan uzak) ---
 const themePresets = {
-  modern: { headerBg: '#1e293b', headerText: '#ffffff', accentColor: '#16a085', footerText: '#fbbf24', footerBg: '#1e293b', bodyText: '#333333', bgColor: '#0c1324', titleColor: '#ffffff', cardRadius: 14, darkMode: false },
-  classic: { headerBg: '#2c3e50', headerText: '#ecf0f1', accentColor: '#8e44ad', footerText: '#f1c40f', footerBg: '#2c3e50', bodyText: '#2c3e50', bgColor: '#1a1a2e', titleColor: '#ecf0f1', cardRadius: 8, darkMode: false },
-  colorful: { headerBg: '#6366f1', headerText: '#ffffff', accentColor: '#f43f5e', footerText: '#fbbf24', footerBg: '#4f46e5', bodyText: '#1e293b', bgColor: '#0f172a', titleColor: '#ffffff', cardRadius: 18, darkMode: false },
-  nature: { headerBg: '#065f46', headerText: '#d1fae5', accentColor: '#059669', footerText: '#a7f3d0', footerBg: '#064e3b', bodyText: '#1e293b', bgColor: '#022c22', titleColor: '#ecfdf5', cardRadius: 12, darkMode: false },
-  dark: { headerBg: '#111827', headerText: '#f9fafb', accentColor: '#3b82f6', footerText: '#60a5fa', footerBg: '#111827', bodyText: '#e5e7eb', bgColor: '#030712', titleColor: '#f9fafb', cardRadius: 14, darkMode: true },
-  light: { headerBg: '#ffffff', headerText: '#1e293b', accentColor: '#0ea5e9', footerText: '#475569', footerBg: '#f8fafc', bodyText: '#1e293b', bgColor: '#f1f5f9', titleColor: '#0f172a', cardRadius: 12, darkMode: false },
+  akademik: {
+    label: 'Akademik Taze',
+    blurb: 'Lacivert + zümrüt; günlük kullanım varsayılanı',
+    headerBg: '#132337', headerText: '#e8eef6', accentColor: '#0f8f78',
+    footerText: '#e8c468', footerBg: '#0f1c2e', bodyText: '#1f2a37',
+    bgColor: '#101b2d', titleColor: '#f7fafc', cardRadius: 16, darkMode: false,
+    fontFamily: "'Manrope', system-ui, sans-serif",
+    titleFont: "'Playfair Display', Georgia, serif", titleSize: 26
+  },
+  sakin: {
+    label: 'Sakin Odak',
+    blurb: 'Soft teal ve açık sis zemini; uzun ders oturumu',
+    headerBg: '#1a3a42', headerText: '#e7f4f6', accentColor: '#2a9d8f',
+    footerText: '#b7e4c7', footerBg: '#153138', bodyText: '#24333a',
+    bgColor: '#e8eef1', titleColor: '#f4fbfb', cardRadius: 14, darkMode: false,
+    fontFamily: "'Manrope', system-ui, sans-serif",
+    titleFont: "'Manrope', system-ui, sans-serif", titleSize: 24
+  },
+  etkinlik: {
+    label: 'Canlı Etkinlik',
+    blurb: 'Yüksek kontrast CTA; duyuru ve etkinlik haftası',
+    headerBg: '#0b2e24', headerText: '#f3fff8', accentColor: '#12b886',
+    footerText: '#ffe8a3', footerBg: '#082119', bodyText: '#14231c',
+    bgColor: '#0d221b', titleColor: '#ffffff', cardRadius: 18, darkMode: false,
+    fontFamily: "'Manrope', system-ui, sans-serif",
+    titleFont: "'Playfair Display', Georgia, serif", titleSize: 28
+  },
+  kampus: {
+    label: 'Kampüs Ormanı',
+    blurb: 'Derin yeşil atmosfer; sakin ama kararlı',
+    headerBg: '#12433a', headerText: '#e6f6f1', accentColor: '#2f9e74',
+    footerText: '#c6f0df', footerBg: '#0e322b', bodyText: '#1c322b',
+    bgColor: '#0c281f', titleColor: '#f1fcf7', cardRadius: 14, darkMode: false,
+    fontFamily: "'Manrope', system-ui, sans-serif",
+    titleFont: "'Playfair Display', Georgia, serif", titleSize: 25
+  },
+  gunisigi: {
+    label: 'Gündüz Net',
+    blurb: 'Aydınlık panel; rapor ve baskı dostu',
+    headerBg: '#f4f7fa', headerText: '#1c2b3a', accentColor: '#0b7f86',
+    footerText: '#334155', footerBg: '#e8eef4', bodyText: '#1e293b',
+    bgColor: '#dbe4ee', titleColor: '#0f2740', cardRadius: 12, darkMode: false,
+    fontFamily: "'Manrope', system-ui, sans-serif",
+    titleFont: "'Manrope', system-ui, sans-serif", titleSize: 23
+  },
+  zümre: {
+    label: 'Zümre Lacivert',
+    blurb: 'Resmî okul dili; altın vurgu ile ciddiyet',
+    headerBg: '#1a2744', headerText: '#eef3ff', accentColor: '#3d7ea6',
+    footerText: '#d4b483', footerBg: '#141e36', bodyText: '#1f2937',
+    bgColor: '#121a2d', titleColor: '#f8fafc', cardRadius: 12, darkMode: false,
+    fontFamily: "'Manrope', system-ui, sans-serif",
+    titleFont: "'Playfair Display', Georgia, serif", titleSize: 26
+  },
+  mezuniyet: {
+    label: 'Mezuniyet',
+    blurb: 'Gece tören ışığı; teal ve şampanya tonu',
+    headerBg: '#12353f', headerText: '#f4fafb', accentColor: '#1aa6a0',
+    footerText: '#e6c989', footerBg: '#0d272f', bodyText: '#1e2f35',
+    bgColor: '#0b2229', titleColor: '#ffffff', cardRadius: 16, darkMode: false,
+    fontFamily: "'Manrope', system-ui, sans-serif",
+    titleFont: "'Playfair Display', Georgia, serif", titleSize: 27
+  },
+  gece: {
+    label: 'Gece Ders',
+    blurb: 'Düşük ışıklı çalışma; amber vurgu',
+    headerBg: '#161b22', headerText: '#f0f3f6', accentColor: '#d4a017',
+    footerText: '#f0d78c', footerBg: '#10151b', bodyText: '#d8dee6',
+    bgColor: '#0b0f14', titleColor: '#f8fafc', cardRadius: 14, darkMode: true,
+    fontFamily: "'Manrope', system-ui, sans-serif",
+    titleFont: "'Manrope', system-ui, sans-serif", titleSize: 24
+  }
 };
-const themePresetNames = { modern: 'Modern', classic: 'Klasik', colorful: 'Renkli', nature: 'Doğa', dark: 'Koyu', light: 'Açık' };
+
+const themePresetNames = Object.fromEntries(
+  Object.entries(themePresets).map(([key, preset]) => [key, preset.label])
+);
 
 const applyThemePreset = (presetKey) => {
   const preset = themePresets[presetKey];
   if (!preset) return;
-  Object.assign(schoolSettings.value.styles, preset);
-  toast.success(`"${themePresetNames[presetKey]}" teması uygulandı.`);
+  const {
+    label, blurb, ...styleFields
+  } = preset;
+  Object.assign(schoolSettings.value.styles, styleFields);
+  toast.success(`"${label}" teması uygulandı.`);
 };
 
 const schoolSettings = ref(JSON.parse(JSON.stringify(defaultSettings)));
@@ -4100,7 +4172,7 @@ const colorForLabel = (label) => {
     '--body-text': schoolSettings.styles.bodyText,
     '--footer-text': schoolSettings.styles.footerText,
     '--footer-bg': schoolSettings.styles.footerBg || schoolSettings.styles.headerBg,
-    '--bg-color': schoolSettings.styles.bgColor || '#0c1324',
+    '--bg-color': schoolSettings.styles.bgColor || '#101b2d',
     '--card-radius': (schoolSettings.styles.cardRadius || 14) + 'px',
     '--title-color': schoolSettings.styles.titleColor
   }">
@@ -4986,10 +5058,26 @@ const colorForLabel = (label) => {
         <h3>🎨 Tasarım Stüdyosu</h3>
 
         <!-- TEMA PRESET'LERİ -->
-        <div class="s-section" style="border-left: 4px solid #6366f1;">
+        <div class="s-section" style="border-left: 4px solid #0f8f78;">
           <h4>🖼️ Hazır Tema Paketleri</h4>
+          <p class="theme-help">Okul kimliğine uygun paletler. Birini seç → canlı önizleme → “Tasarımı Mühürle”.</p>
           <div class="theme-presets-grid">
-            <button v-for="(label, key) in themePresetNames" :key="key" class="theme-preset-btn" :style="{ background: themePresets[key].headerBg, color: themePresets[key].headerText, borderColor: themePresets[key].accentColor }" @click="applyThemePreset(key)">{{ label }}</button>
+            <button
+              v-for="(preset, key) in themePresets"
+              :key="key"
+              type="button"
+              class="theme-preset-card"
+              :class="{ recommended: key === 'akademik' }"
+              @click="applyThemePreset(key)"
+            >
+              <span class="theme-swatch-row">
+                <i :style="{ background: preset.headerBg }"></i>
+                <i :style="{ background: preset.accentColor }"></i>
+                <i :style="{ background: preset.bgColor }"></i>
+              </span>
+              <strong>{{ preset.label }}</strong>
+              <small>{{ preset.blurb }}</small>
+            </button>
           </div>
         </div>
         
@@ -5602,10 +5690,10 @@ const colorForLabel = (label) => {
   flex-direction: column; 
   align-items: center; 
   background:
-    radial-gradient(900px 600px at 10% -10%, rgba(251, 191, 135, 0.28), transparent 60%),
-    radial-gradient(900px 600px at 110% 10%, rgba(186, 170, 255, 0.22), transparent 60%),
-    radial-gradient(700px 500px at 50% 110%, rgba(109, 210, 224, 0.18), transparent 60%),
-    linear-gradient(180deg, var(--bg-color, #0c1324) 0%, color-mix(in srgb, var(--bg-color, #111827) 90%, white) 60%, var(--bg-color, #0c1324) 100%);
+    radial-gradient(920px 580px at 12% -8%, color-mix(in srgb, var(--accent, #0f8f78) 30%, transparent), transparent 62%),
+    radial-gradient(780px 520px at 100% 4%, color-mix(in srgb, var(--footer-text, #e8c468) 16%, transparent), transparent 58%),
+    radial-gradient(720px 480px at 48% 108%, color-mix(in srgb, var(--accent, #0f8f78) 12%, transparent), transparent 60%),
+    linear-gradient(180deg, var(--bg-color, #101b2d) 0%, color-mix(in srgb, var(--bg-color, #111827) 88%, white) 55%, var(--bg-color, #101b2d) 100%);
   background-attachment: fixed; 
 }
 
@@ -7266,25 +7354,65 @@ small {
 }
 
 /* THEME PRESETS */
+.theme-help {
+  margin: 0 0 12px;
+  font-size: 0.82rem;
+  color: #64748b;
+  line-height: 1.4;
+}
 .theme-presets-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
 }
-
-.theme-preset-btn {
-  padding: 10px 6px;
-  border: 2px solid;
-  border-radius: 10px;
-  font-weight: 800;
-  font-size: 0.72rem;
+@media (min-width: 720px) {
+  .theme-presets-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+.theme-preset-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 12px 11px;
+  border: 1px solid #d9e2ec;
+  border-radius: 12px;
+  background: #f8fafc;
   cursor: pointer;
-  transition: transform 0.2s, box-shadow 0.2s;
+  text-align: left;
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
-
-.theme-preset-btn:hover {
+.theme-preset-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+  border-color: color-mix(in srgb, var(--accent, #0f8f78) 55%, #d9e2ec);
+  box-shadow: 0 10px 22px rgba(15, 28, 46, 0.12);
+}
+.theme-preset-card.recommended {
+  border-color: color-mix(in srgb, var(--accent, #0f8f78) 70%, #d9e2ec);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #0f8f78) 35%, transparent);
+}
+.theme-preset-card strong {
+  font-size: 0.82rem;
+  color: #1e293b;
+  font-weight: 800;
+}
+.theme-preset-card small {
+  margin: 0;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  color: #64748b;
+}
+.theme-swatch-row {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+}
+.theme-swatch-row i {
+  flex: 1;
+  height: 18px;
+  border-radius: 5px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
 }
 
 /* DESIGN PREVIEW */
