@@ -770,10 +770,22 @@ const loadTeacherNotificationSettings = async () => {
 };
 
 const saveTeacherNotificationSettings = async () => {
-  await setDoc(
-    doc(db, "private_settings", "teacher_notifications"),
-    mergeTeacherApprovalEmailSettings(teacherNotificationSettings.value)
-  );
+  if (!isLeadershipUser()) {
+    toast.warning('Bu ayar için yönetici yetkisi gerekir.');
+    return;
+  }
+  try {
+    await setDoc(
+      doc(db, "private_settings", "teacher_notifications"),
+      mergeTeacherApprovalEmailSettings(teacherNotificationSettings.value)
+    );
+    toast.success('Öğretmen e-posta ayarları kaydedildi.');
+  } catch (error) {
+    const msg = functionErrorMessage(error, 'Öğretmen e-posta ayarları kaydedilemedi.');
+    pushSystemError(`Öğretmen e-posta ayarları: ${msg}`);
+    toast.error(msg);
+    throw error;
+  }
 };
 
 const autoSaveAdminSettings = async () => {

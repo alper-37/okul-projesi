@@ -78,9 +78,11 @@ service cloud.firestore {
       allow write: if isLeadership();
     }
 
-    // Private notification settings: approved users can read to trigger mail on question create
+    // Private notification settings:
+    // - leadership always read/write (admin panel)
+    // - approved users can read (to notify teachers on new questions)
     match /private_settings/{docId} {
-      allow read: if isApprovedActiveUser();
+      allow read: if isLeadership() || isApprovedActiveUser();
       allow write: if isLeadership();
     }
 
